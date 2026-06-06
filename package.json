@@ -1,0 +1,21 @@
+{
+  "name": "@lxkuz/webpage-translate-engine",
+  "version": "0.1.0",
+  "description": "Reusable Chrome Built-in Translator engine for extension page-context injection",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/lxkuz/webpage-translate-engine.git"
+  },
+  "files": [
+    "src",
+    "presets",
+    "README.md"
+  ],
+  "scripts": {
+    "test:unit": "node --test test/unit/*.spec.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
