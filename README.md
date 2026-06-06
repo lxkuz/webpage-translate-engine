@@ -57,6 +57,9 @@ Set on `self.WTE_CONFIG` in a preset file (see `presets/wptranlate.js`):
 | `prefix` | DOM class/data-attribute prefix (`wptranlate` → `.wptranlate-cached`) |
 | `enabledDomainsStorageKey` | `chrome.storage.local` key listing hostnames allowed to translate |
 | `events.start` / `events.end` | `chrome.runtime.sendMessage` action names |
+| `events.queueLlmRefine` | Optional: queue visible translations for LLM refinement (extension handles WebSocket) |
+| `events.translationStarted` | Optional: fired after first visible batch (e.g. close panel early) |
+| `llmRefine.enabled` | Enable in-page queue hooks (default `false`) |
 | `uiHostSuffixes` | Shadow host id suffixes skipped during DOM walk |
 
 ## Public API (page context)
@@ -88,6 +91,10 @@ const { wteMainFrameSkippedSameLang, wteInjectSucceeded } = require('./src/frame
 ## Translate Webpage preset
 
 `presets/wptranlate.js` matches the [trnslt_one_button](https://github.com/lxkuz/trnslt_one_button) extension DOM markers and storage keys.
+
+## Trnslt preset
+
+`presets/trnslt.js` matches the [trnslt](https://github.com/lxkuz/trnslt) extension (LLM refine queue hooks enabled, `topFrameHtml` language detection).
 
 ## License
 
