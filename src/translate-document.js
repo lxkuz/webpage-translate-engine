@@ -363,14 +363,22 @@ async function wteTranslateDocument(targetLanguage, sourceLanguageOverride, mess
     const allBatches = wrapped.length
       ? [firstBatch, ...injSliceTextBatches(restVisible, VISIBLE_BATCH), ...injSliceTextBatches(offScreen, OFFSCREEN_BATCH)]
       : [];
+    const numVisibleBatches = wrapped.length ? 1 + injSliceTextBatches(restVisible, VISIBLE_BATCH).length : 0;
     const siteTitle = (typeof document !== 'undefined' && document.title?.trim()) || '';
 
     const cache = getCache(targetLanguage);
     const currentUrl = (typeof location !== 'undefined' ? location.href : '') || '';
 
     let titleTranslatedThisRun = false;
+    let translationStartedSent = false;
     let aborted = false;
+    let batchIndex = 0;
+    const wteQueueLlm = g.WTE?.wteQueueLlmRefine;
+    const wteNotifyStarted = g.WTE?.wteNotifyTranslationStarted;
+    const wteRescanLlm = g.WTE?.wteRescanVisibleCachedForLlmRefine;
     for (const batch of allBatches) {
+      const isVisibleBatch = batchIndex < numVisibleBatches;
+      batchIndex++;
       if (batch.length === 0) continue;
       const domainsNow = await wteGetEnabledDomains();
       if (!domainsNow.includes(hostname)) {
@@ -459,6 +467,17 @@ async function wteTranslateDocument(targetLanguage, sourceLanguageOverride, mess
           span.textContent = tr;
           span.classList.add(nm.classCached);
           span.dataset[nm.dataLang] = targetLanguage;
+          if (isVisibleBatch && wteQueueLlm) {
+            wteQueueLlm(cfg, nm, {
+              tabId: messageTabId,
+              targetLang: targetLanguage,
+              visible: true,
+              orig,
+              local_tr: tr,
+              sourceLanguage,
+              targetLanguage,
+            });
+          }
           const textNode = span.firstChild;
           if (textNode) translated.add(textNode);
         } else {
@@ -468,6 +487,10 @@ async function wteTranslateDocument(targetLanguage, sourceLanguageOverride, mess
       }
 
       if (cacheDirty) saveCache(cache, targetLanguage);
+      if (batch === firstBatch && !translationStartedSent && wteNotifyStarted) {
+        translationStartedSent = true;
+        wteNotifyStarted(cfg, { tabId: messageTabId });
+      }
       await new Promise((r) => setTimeout(r, 0));
     }
 
@@ -592,6 +615,10 @@ async function wteTranslateDocument(targetLanguage, sourceLanguageOverride, mess
             if (tr && tr !== origT) injStampAttr(job.el, job.attr, job.orig, tr);
           }
           if (attrCacheDirty) saveCache(cache, targetLanguage);
+          if (isFirstAttrBatch && !translationStartedSent && wteNotifyStarted) {
+            translationStartedSent = true;
+            wteNotifyStarted(cfg, { tabId: messageTabId });
+          }
           await new Promise((r) => setTimeout(r, 0));
         }
       }
@@ -644,10 +671,21 @@ async function wteTranslateDocument(targetLanguage, sourceLanguageOverride, mess
         }
       } else if (!self[nm.stateScrollSetup]) {
         self[nm.stateScrollSetup] = true;
+        const savedSourceLang = sourceLanguage;
+        const savedTabId = messageTabId ?? undefined;
         let scrollTid;
         window.addEventListener('scroll', () => {
           clearTimeout(scrollTid);
-          scrollTid = setTimeout(() => { wteTranslateDocument(targetLanguage, sourceLanguageOverride, messageTabId, topFrameHtmlLang); }, scrollDebounceMs);
+          scrollTid = setTimeout(() => {
+            wteTranslateDocument(targetLanguage, sourceLanguageOverride, messageTabId, topFrameHtmlLang);
+            if (wteRescanLlm) {
+              wteRescanLlm(cfg, nm, {
+                targetLanguage,
+                sourceLanguage: savedSourceLang,
+                messageTabId: savedTabId,
+              });
+            }
+          }, scrollDebounceMs);
         }, { passive: true });
         setTimeout(() => wteTranslateDocument(targetLanguage, sourceLanguageOverride, messageTabId, topFrameHtmlLang), scrollRetryMs);
       }
@@ -681,6 +719,7 @@ async function wteTranslateDocument(targetLanguage, sourceLanguageOverride, mess
   if (typeof window !== 'undefined') {
     window.__wptranlateTranslate = wteTranslateDocument;
     if (cfg.prefix === 'tsmpl') window.__tsmplTranslate = wteTranslateDocument;
+    if (cfg.prefix === 'trnslt') window.__trnsltTranslate = wteTranslateDocument;
   }
   if (typeof module !== 'undefined' && module.exports) {
     module.exports = { ...module.exports, wteTranslateDocument };

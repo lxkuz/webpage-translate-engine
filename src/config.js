@@ -64,6 +64,12 @@
         start: overrides?.events?.start ?? base.events?.start ?? 'wte:translate-start',
         end: overrides?.events?.end ?? base.events?.end ?? 'wte:translate-end',
         downloadProgress: overrides?.events?.downloadProgress ?? base.events?.downloadProgress ?? 'wte:download-progress',
+        queueLlmRefine: overrides?.events?.queueLlmRefine ?? base.events?.queueLlmRefine ?? null,
+        translationStarted: overrides?.events?.translationStarted ?? base.events?.translationStarted ?? null,
+      },
+      llmRefine: {
+        enabled: overrides?.llmRefine?.enabled ?? base.llmRefine?.enabled ?? false,
+        visibleOnly: overrides?.llmRefine?.visibleOnly ?? base.llmRefine?.visibleOnly ?? true,
       },
       batch: {
         visibleFirst: overrides?.batch?.visibleFirst ?? base.batch?.visibleFirst ?? 20,
