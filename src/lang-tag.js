@@ -12,7 +12,8 @@
     return primary;
   }
 
-  const api = { wptranlateNormalizeLangTag };
+  const wteNormalizeLangTag = wptranlateNormalizeLangTag;
+  const api = { wptranlateNormalizeLangTag, wteNormalizeLangTag };
   if (typeof self !== 'undefined') Object.assign(self, api);
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })();

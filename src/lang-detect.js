@@ -57,8 +57,9 @@
   if (typeof module !== 'undefined' && module.exports) {
     module.exports = api;
   }
+  const wteDetectLangFromText = wptranlateDetectLangFromText;
   if (typeof self !== 'undefined') {
     self.__wptranlateLangDetect = api;
-    Object.assign(self, { wptranlateDetectLangFromText });
+    Object.assign(self, { wptranlateDetectLangFromText, wteDetectLangFromText });
   }
 })();

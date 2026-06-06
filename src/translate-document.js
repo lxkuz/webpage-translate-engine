@@ -31,13 +31,26 @@
     }
   }
 
-async function wteTranslateDocument(targetLanguage, sourceLanguageOverride, messageTabId) {
-  function wptranlateInjToastErr(msg) {
+async function wteTranslateDocument(targetLanguage, sourceLanguageOverride, messageTabId, topFrameHtmlLang) {
+  const cfg = g.WTE?.wteMergeConfig?.() || {};
+  const nm = cfg.names || g.WTE?.wteMakeNames?.('wptranlate');
+  const ev = cfg.events || {};
+  const domainsKey = cfg.enabledDomainsStorageKey || 'wptranlate_enabledDomains';
+  const batchCfg = cfg.batch || {};
+  const scrollDebounceMs = cfg.scrollDebounceMs ?? 400;
+  const scrollRetryMs = cfg.scrollRetryMs ?? 2000;
+  const detectSampleLen = cfg.detectSampleLen ?? 3000;
+  const uiHostIdSet = new Set(nm.uiHostIds || []);
+  async function wteGetEnabledDomains() {
+    const data = await chrome.storage.local.get(domainsKey);
+    return data[domainsKey] || [];
+  }
+  function injToastErr(msg) {
     try {
-      console.error('[Translate Webpage]', msg);
+      console.error(cfg.logTag || '[WebpageTranslateEngine]', msg);
       if (typeof window !== 'undefined' && window === window.top && document.body) {
         const el = document.createElement('div');
-        el.id = 'wptranlate-error-toast';
+        el.id = nm.errorToastId;
         el.style.cssText = 'position:fixed;bottom:16px;left:50%;transform:translateX(-50%);max-width:90%;padding:10px 16px;background-color:#1e1826;color:#f1f5f9;border:none;border-radius:8px;font-size:14px;z-index:2147483647;box-shadow:0 4px 12px rgba(0,0,0,.3),0 0 0 1px rgba(170,95,191,.15);';
         el.textContent = msg;
         document.body.appendChild(el);
@@ -45,77 +58,96 @@ async function wteTranslateDocument(targetLanguage, sourceLanguageOverride, mess
       }
     } catch (_) {}
   }
-  const hashStr = (typeof self !== 'undefined' && self.wptranlateDjb2Key) || (s => {
+  const hashStr = (typeof self !== 'undefined' && (self.wteDjb2Key || self.wptranlateDjb2Key || self.tsmplDjb2Key)) || (s => {
     let h = 5381;
     for (let i = 0; i < s.length; i++) h = ((h << 5) + h) + s.charCodeAt(i);
     return (h >>> 0).toString(36);
   });
-  const { getCache, saveCache } = (typeof self !== 'undefined' && self.__wptranlateCache) || { getCache: () => ({ entries: {}, urlOrder: [], revEntries: {} }), saveCache: () => {} };
+  const { getCache, saveCache } = (typeof self !== 'undefined' && (self.__wteCache || self.__wptranlateCache || self.__tsmplCache)) || { getCache: () => ({ entries: {}, urlOrder: [], revEntries: {} }), saveCache: () => {} };
 
   const isHttp = typeof location !== 'undefined' && location.protocol === 'http:' &&
     !/^localhost$|^127\.0\.0\.1$/.test(location.hostname);
   if (isHttp) {
-    wptranlateInjToastErr(chrome.i18n.getMessage('uiErrHttpsOnly'));
+    injToastErr(chrome.i18n.getMessage('uiErrHttpsOnly'));
     return;
   }
   if (!('Translator' in self)) {
-    wptranlateInjToastErr(chrome.i18n.getMessage('uiErrNoBuiltInTranslator'));
+    injToastErr(chrome.i18n.getMessage('uiErrNoBuiltInTranslator'));
     return;
   }
 
   const hostname = typeof location !== 'undefined' ? location.hostname : '';
-  const { wptranlate_enabledDomains: domains = [] } = await chrome.storage.local.get('wptranlate_enabledDomains');
+  const domains = await wteGetEnabledDomains();
   if (!hostname || !domains.includes(hostname)) return;
 
-  if (self.__wptranlateTranslating) {
-    self.__wptranlateTranslatePending = true;
+  if (self[nm.stateTranslating]) {
+    self[nm.stateTranslatePending] = true;
     return;
   }
   if (!document.body) return;
-  self.__wptranlateTranslating = true;
-  self.__wptranlateLastTranslateArgs = [targetLanguage, sourceLanguageOverride, messageTabId];
+  self[nm.stateTranslating] = true;
+  self[nm.stateLastArgs] = [targetLanguage, sourceLanguageOverride, messageTabId];
   let badgeLit = false;
 
-  const translated = (self.__wptranlateTranslated = self.__wptranlateTranslated || new WeakSet());
+  const translated = (self[nm.stateTranslated] = self[nm.stateTranslated] || new WeakSet());
 
-  const wptranlateInjNormalizeLang = (typeof self !== 'undefined' && self.wptranlateNormalizeLangTag) || ((tag) => {
+  const injNormalizeLang = (typeof self !== 'undefined' && (self.wteNormalizeLangTag || self.wptranlateNormalizeLangTag)) || ((tag) => {
     if (tag == null || typeof tag !== 'string') return null;
     const primary = tag.trim().split(/[-_]/)[0].toLowerCase();
     if (!primary || primary === 'x' || /[%{}]/.test(primary) || !/^[a-z]{2,3}$/.test(primary)) return null;
     return primary;
   });
-  const wptranlateInjDetectLang = (typeof self !== 'undefined' && self.wptranlateDetectLangFromText) || (async () => null);
-  const wptranlateInjSilentSkip = () => ({ skipped: true, reason: 'same-lang' });
+  const injDetectLang = (typeof self !== 'undefined' && (self.wteDetectLangFromText || self.wptranlateDetectLangFromText)) || (async () => null);
+  const injSilentSkip = () => ({ skipped: true, reason: 'same-lang' });
 
   try {
     // Язык: из попапа (sourceLanguageOverride) или LanguageDetector + html[lang]
-    const targetLangNorm = wptranlateInjNormalizeLang(targetLanguage);
-    if (!targetLangNorm) return wptranlateInjSilentSkip();
+    const targetLangNorm = injNormalizeLang(targetLanguage);
+    if (!targetLangNorm) return injSilentSkip();
     targetLanguage = targetLangNorm;
 
-    const sample = document.body?.innerText?.slice(0, 3000) || '';
+    const sample = document.body?.innerText?.slice(0, detectSampleLen) || '';
 
     let sourceLanguage;
     if (sourceLanguageOverride && sourceLanguageOverride.trim()) {
-      sourceLanguage = wptranlateInjNormalizeLang(sourceLanguageOverride);
-      if (!sourceLanguage) return wptranlateInjSilentSkip();
+      sourceLanguage = injNormalizeLang(sourceLanguageOverride);
+      if (!sourceLanguage) return injSilentSkip();
+    } else if (cfg.langDetection === 'topFrameHtml') {
+      let declaredLang = '';
+      if (typeof topFrameHtmlLang === 'string') {
+        declaredLang = topFrameHtmlLang.trim();
+      } else {
+        try {
+          declaredLang = (window.top.document.documentElement?.lang || '').trim();
+        } catch (_) {
+          declaredLang = (document.documentElement?.lang || '').trim();
+        }
+      }
+      sourceLanguage = injNormalizeLang(declaredLang || 'en');
+      if (!sourceLanguage) return injSilentSkip();
+      if (cfg.langHeuristicLatinCyrillic && sourceLanguage === targetLanguage) {
+        const cyrillic = (sample.match(/[\u0400-\u04FF]/g) || []).length;
+        const latin = (sample.match(/[a-zA-Z]/g) || []).length;
+        if (latin > cyrillic * 1.5) sourceLanguage = 'en';
+        else return injSilentSkip();
+      }
     } else {
-      const detected = await wptranlateInjDetectLang(sample, { normalizeLang: wptranlateInjNormalizeLang });
-      const fromHtml = wptranlateInjNormalizeLang(document.documentElement?.lang);
+      const detected = await injDetectLang(sample, { normalizeLang: injNormalizeLang });
+      const fromHtml = injNormalizeLang(document.documentElement?.lang);
       sourceLanguage = detected?.lang ?? fromHtml;
-      if (!sourceLanguage) return wptranlateInjSilentSkip();
+      if (!sourceLanguage) return injSilentSkip();
     }
-    if (sourceLanguage === targetLanguage) return wptranlateInjSilentSkip();
+    if (sourceLanguage === targetLanguage) return injSilentSkip();
 
     let avail;
     try {
       avail = await Translator.availability({ sourceLanguage, targetLanguage });
     } catch (e) {
-      if (/invalid language tag/i.test(e?.message || '')) return wptranlateInjSilentSkip();
+      if (/invalid language tag/i.test(e?.message || '')) return injSilentSkip();
       throw e;
     }
     if (avail === 'unavailable') {
-      wptranlateInjToastErr(chrome.i18n.getMessage('uiErrModelUnavailable'));
+      injToastErr(chrome.i18n.getMessage('uiErrModelUnavailable'));
       return;
     }
     const needsDownload = avail === 'downloadable' || avail === 'downloading';
@@ -130,7 +162,7 @@ async function wteTranslateDocument(targetLanguage, sourceLanguageOverride, mess
             m.addEventListener('downloadprogress', (e) => {
               const total = e.total && e.total > 0 ? e.total : 1;
               const pct = Math.min(100, Math.round((e.loaded / total) * 100));
-              chrome.runtime.sendMessage({ action: 'wptranlate:download-progress', loaded: e.loaded, total: e.total, percent: pct, tabId: messageTabId ?? undefined }).catch(() => {});
+              chrome.runtime.sendMessage({ action: ev.downloadProgress, loaded: e.loaded, total: e.total, percent: pct, tabId: messageTabId ?? undefined }).catch(() => {});
             });
           },
         }),
@@ -138,151 +170,151 @@ async function wteTranslateDocument(targetLanguage, sourceLanguageOverride, mess
     } catch (e) {
       if (/user gesture/i.test(e?.message || '')) return;
       if (/Permission Policy|sandbox|access denied/i.test(e?.message || '')) return; // iframe/sandbox — тихо пропускаем
-      wptranlateInjToastErr(chrome.i18n.getMessage('uiErrTranslatorCreate', [String(e?.message || e)]));
+      injToastErr(chrome.i18n.getMessage('uiErrTranslatorCreate', [String(e?.message || e)]));
       return;
     }
 
-    function wptranlateInjNodeInChromeUi(node) {
+    function injNodeInChromeUi(node) {
       const root = node.getRootNode();
       if (root instanceof ShadowRoot && root.host?.id) {
         const id = root.host.id;
-        if (id === 'wptranlate-page-panel' || id === 'wptranlate-error-toast' || id === 'wptranlate-quick-toggle-toast' || id === 'wptranlate-same-lang-toast' || id === 'wptranlate-https-only-toast' || id === 'wptranlate-status-bar') return true;
+        if (uiHostIdSet.has(id)) return true;
       }
       const parent = node.parentElement;
-      if (parent?.closest?.('[data-wptranlate-ui], [translate="no"], .wptranlate-ui-notranslate')) return true;
-      return parent?.closest?.('#wptranlate-page-panel, #wptranlate-error-toast, #wptranlate-quick-toggle-toast, #wptranlate-same-lang-toast, #wptranlate-https-only-toast, #wptranlate-status-bar');
+      if (parent?.closest?.(`[${nm.dataUiAttr}], [translate="no"], .${nm.classUiNotranslate}`)) return true;
+      return parent?.closest?.(nm.uiClosestSelector);
     }
     /** Убирает мусор форматирования HTML (\n + отступы после &lt;br&gt;); в &lt;pre&gt; только trim краёв — переносы внутри блока сохраняем. */
-    function wptranlateInjNormalizeText(node) {
+    function injNormalizeText(node) {
       const raw = node.textContent ?? '';
       if (node.parentElement?.closest('pre')) {
         return raw.replace(/^\s+/, '').replace(/\s+$/, '');
       }
       return String(raw).replace(/\s+/g, ' ').trim();
     }
-    function wptranlateInjAcceptTextNode(node) {
+    function injAcceptTextNode(node) {
       if (translated.has(node)) return false;
       const parent = node.parentElement;
       if (!parent) return false;
-      if (parent.closest?.('.wptranlate-cached')) return false;
-      if (parent.closest?.('span[data-wptranlate-orig]') && !parent.closest?.('.wptranlate-cached')) return false;
-      if (wptranlateInjNodeInChromeUi(node)) return false;
+      if (parent.closest?.('.' + nm.classCached + '')) return false;
+      if (parent.closest?.('span[data-' + cfg.prefix + '-orig]') && !parent.closest?.('.' + nm.classCached + '')) return false;
+      if (injNodeInChromeUi(node)) return false;
       if (parent.tagName === 'CODE' && !parent.closest('pre')) return false;
       if (parent.tagName?.match(/^(SCRIPT|STYLE)$/)) return false;
-      return wptranlateInjNormalizeText(node).length >= 2;
+      return injNormalizeText(node).length >= 2;
     }
-    function wptranlateInjGatherTextNodes(root, out) {
+    function injGatherTextNodes(root, out) {
       const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
       while (w.nextNode()) {
-        if (wptranlateInjAcceptTextNode(w.currentNode)) out.push(w.currentNode);
+        if (injAcceptTextNode(w.currentNode)) out.push(w.currentNode);
       }
       const els = root.querySelectorAll('*');
       for (const el of els) {
-        if (el.shadowRoot && !wptranlateInjElInChromeUi(el)) wptranlateInjGatherTextNodes(el.shadowRoot, out);
+        if (el.shadowRoot && !injElInChromeUi(el)) injGatherTextNodes(el.shadowRoot, out);
       }
     }
-    function wptranlateInjUnwrapOrphanSpans(root) {
-      root.querySelectorAll('span[data-wptranlate-orig]:not(.wptranlate-cached):not(.wptranlate-wave)').forEach((span) => {
-        const t = span.dataset.wptranlateOrig ?? span.textContent ?? '';
+    function injUnwrapOrphanSpans(root) {
+      root.querySelectorAll(nm.selOrigSpan).forEach((span) => {
+        const t = span.dataset[nm.dataOrig] ?? span.textContent ?? '';
         if (span.parentNode) span.parentNode.replaceChild(document.createTextNode(t), span);
       });
       root.querySelectorAll('*').forEach((el) => {
-        if (el.shadowRoot && !wptranlateInjElInChromeUi(el)) wptranlateInjUnwrapOrphanSpans(el.shadowRoot);
+        if (el.shadowRoot && !injElInChromeUi(el)) injUnwrapOrphanSpans(el.shadowRoot);
       });
     }
-    wptranlateInjUnwrapOrphanSpans(document.body);
+    injUnwrapOrphanSpans(document.body);
     const nodesToTranslate = [];
-    wptranlateInjGatherTextNodes(document.body, nodesToTranslate);
+    injGatherTextNodes(document.body, nodesToTranslate);
 
-    const toProcess = nodesToTranslate.filter((n) => wptranlateInjNormalizeText(n).length >= 2);
+    const toProcess = nodesToTranslate.filter((n) => injNormalizeText(n).length >= 2);
 
-    function wptranlateInjElInChromeUi(el) {
+    function injElInChromeUi(el) {
       if (!el || el.nodeType !== 1) return true;
-      if (el.closest?.('.wptranlate-cached')) return true;
+      if (el.closest?.('.' + nm.classCached + '')) return true;
       const r = el.getRootNode();
       if (r instanceof ShadowRoot && r.host?.id) {
         const id = r.host.id;
-        if (id === 'wptranlate-page-panel' || id === 'wptranlate-error-toast' || id === 'wptranlate-quick-toggle-toast' || id === 'wptranlate-same-lang-toast' || id === 'wptranlate-https-only-toast' || id === 'wptranlate-status-bar') return true;
+        if (uiHostIdSet.has(id)) return true;
       }
-      if (el.closest?.('[data-wptranlate-ui], [translate="no"], .wptranlate-ui-notranslate')) return true;
-      return Boolean(el.closest?.('#wptranlate-page-panel, #wptranlate-error-toast, #wptranlate-quick-toggle-toast, #wptranlate-same-lang-toast, #wptranlate-https-only-toast, #wptranlate-status-bar'));
+      if (el.closest?.(`[${nm.dataUiAttr}], [translate="no"], .${nm.classUiNotranslate}`)) return true;
+      return Boolean(el.closest?.(nm.uiClosestSelector));
     }
-    function wptranlateInjSkipAttrValue(str) {
+    function injSkipAttrValue(str) {
       const t = (str || '').trim();
       if (t.length < 2 || t.length > 8000) return true;
       if (/^(https?:|data:|mailto:|tel:|\/\/)/i.test(t)) return true;
       return false;
     }
-    function wptranlateInjAttrHasBackup(el, attrName) {
+    function injAttrHasBackup(el, attrName) {
       const key = {
-        placeholder: 'wptranlateI18nPlaceholder',
-        title: 'wptranlateI18nTitle',
-        'aria-label': 'wptranlateI18nAriaLabel',
-        alt: 'wptranlateI18nAlt',
-        content: 'wptranlateI18nContent',
-        value: 'wptranlateI18nValue',
+        placeholder: nm.dataI18nPlaceholder,
+        title: nm.dataI18nTitle,
+        'aria-label': nm.dataI18nAriaLabel,
+        alt: nm.dataI18nAlt,
+        content: nm.dataI18nContent,
+        value: nm.dataI18nValue,
       }[attrName];
       return key && el.dataset[key] != null && el.dataset[key] !== '';
     }
-    function wptranlateInjPushAttrJob(el, attrName, rawVal, out) {
+    function injPushAttrJob(el, attrName, rawVal, out) {
       if (rawVal == null) return;
       const s = String(rawVal);
-      if (wptranlateInjSkipAttrValue(s)) return;
-      if (wptranlateInjAttrHasBackup(el, attrName)) return;
+      if (injSkipAttrValue(s)) return;
+      if (injAttrHasBackup(el, attrName)) return;
       out.push({ el, attr: attrName, orig: s });
     }
-    function wptranlateInjGatherAttrJobs(root, out) {
+    function injGatherAttrJobs(root, out) {
       const els = root.querySelectorAll('*');
       for (const el of els) {
-        if (wptranlateInjElInChromeUi(el)) continue;
+        if (injElInChromeUi(el)) continue;
         if (el.closest?.('script, style, noscript')) continue;
         const tag = el.tagName;
         if (tag === 'SCRIPT' || tag === 'STYLE' || tag === 'NOSCRIPT') continue;
 
         if ('placeholder' in el || el.hasAttribute('placeholder')) {
           const raw = el.getAttribute('placeholder') != null ? el.getAttribute('placeholder') : el.placeholder;
-          wptranlateInjPushAttrJob(el, 'placeholder', raw, out);
+          injPushAttrJob(el, 'placeholder', raw, out);
         }
-        if (el.hasAttribute('title')) wptranlateInjPushAttrJob(el, 'title', el.getAttribute('title'), out);
-        if (el.hasAttribute('aria-label')) wptranlateInjPushAttrJob(el, 'aria-label', el.getAttribute('aria-label'), out);
-        if (el.hasAttribute('alt')) wptranlateInjPushAttrJob(el, 'alt', el.getAttribute('alt'), out);
+        if (el.hasAttribute('title')) injPushAttrJob(el, 'title', el.getAttribute('title'), out);
+        if (el.hasAttribute('aria-label')) injPushAttrJob(el, 'aria-label', el.getAttribute('aria-label'), out);
+        if (el.hasAttribute('alt')) injPushAttrJob(el, 'alt', el.getAttribute('alt'), out);
         if (tag === 'META' && el.hasAttribute('content')) {
           const metaName = (el.getAttribute('name') || '').toLowerCase();
           const prop = (el.getAttribute('property') || '').toLowerCase();
           const metaOk = metaName === 'description' || metaName === 'twitter:description' || metaName === 'twitter:title' ||
             prop === 'og:description' || prop === 'og:title';
-          if (metaOk) wptranlateInjPushAttrJob(el, 'content', el.getAttribute('content'), out);
+          if (metaOk) injPushAttrJob(el, 'content', el.getAttribute('content'), out);
         }
         if (tag === 'INPUT') {
           const typ = (el.type || '').toLowerCase();
           if ((typ === 'submit' || typ === 'button' || typ === 'reset') && el.value) {
-            wptranlateInjPushAttrJob(el, 'value', el.value, out);
+            injPushAttrJob(el, 'value', el.value, out);
           }
         }
       }
       for (const el of els) {
-        if (el.shadowRoot && !wptranlateInjElInChromeUi(el)) wptranlateInjGatherAttrJobs(el.shadowRoot, out);
+        if (el.shadowRoot && !injElInChromeUi(el)) injGatherAttrJobs(el.shadowRoot, out);
       }
     }
     const attrJobs = [];
-    wptranlateInjGatherAttrJobs(document.body, attrJobs);
+    injGatherAttrJobs(document.body, attrJobs);
     if (toProcess.length === 0 && attrJobs.length === 0) return { ok: false, reason: 'empty' };
 
-    const VISIBLE_FIRST_BATCH = 20;   // 20 самых маленьких видимых — первый батч
-    const VISIBLE_BATCH = 20;         // остальные видимые — батчами по 20
-    const OFFSCREEN_BATCH = 100;     // невидимые (за экраном) — батчами по 100
-    const BATCH_SEP = '\u2063';       // U+2063 Invisible Separator — не используется в естественных языках
+    const VISIBLE_FIRST_BATCH = batchCfg.visibleFirst ?? 20;   // 20 самых маленьких видимых — первый батч
+    const VISIBLE_BATCH = batchCfg.visible ?? 20;         // остальные видимые — батчами по 20
+    const OFFSCREEN_BATCH = batchCfg.offscreen ?? 100;     // невидимые (за экраном) — батчами по 100
+    const BATCH_SEP = batchCfg.sep ?? '\u2063';       // U+2063 Invisible Separator — не используется в естественных языках
 
-    function wptranlateInjElementVisible(el) {
+    function injElementVisible(el) {
       const r = el.getBoundingClientRect();
       return r.top < window.innerHeight && r.bottom > 0 && r.left < window.innerWidth && r.right > 0;
     }
 
-    if (!document.getElementById('wptranlate-wave-styles')) {
+    if (!document.getElementById(nm.waveStylesId)) {
       const style = document.createElement('style');
-      style.id = 'wptranlate-wave-styles';
+      style.id = nm.waveStylesId;
       style.textContent = `
-        .wptranlate-wave {
+        .' + nm.classWave + ' {
           background-image: linear-gradient(90deg,
             transparent 0%,
             transparent 40%,
@@ -291,9 +323,9 @@ async function wteTranslateDocument(targetLanguage, sourceLanguageOverride, mess
             transparent 100%);
           background-size: 200% 100%;
           background-repeat: no-repeat;
-          animation: wptranlate-wave-flow 2.68s ease-in-out infinite;
+          animation: ' + nm.prefix + '-wave-flow 2.68s ease-in-out infinite;
         }
-        @keyframes wptranlate-wave-flow {
+        @keyframes ' + nm.prefix + '-wave-flow {
           0% { background-position: 200% 0; }
           100% { background-position: -200% 0; }
         }
@@ -304,32 +336,32 @@ async function wteTranslateDocument(targetLanguage, sourceLanguageOverride, mess
     // Оборачиваем текст в спаны с волновой анимацией (data-wptranlate-orig для отката при выключении)
     const wrapped = toProcess.length
       ? toProcess.map((node) => {
-        const orig = wptranlateInjNormalizeText(node);
+        const orig = injNormalizeText(node);
         const span = document.createElement('span');
-        span.className = 'wptranlate-wave';
-        span.dataset.wptranlateOrig = orig;
+        span.className = nm.classWave;
+        span.dataset[nm.dataOrig] = orig;
         span.textContent = orig;
         node.parentNode.replaceChild(span, node);
         return { span };
       })
       : [];
 
-    function wptranlateInjRevertWaveWraps() {
+    function injRevertWaveWraps() {
       for (const { span } of wrapped) {
-        const orig = span.dataset.wptranlateOrig ?? span.textContent;
+        const orig = span.dataset[nm.dataOrig] ?? span.textContent;
         const textNode = document.createTextNode(orig);
         if (span.parentNode) span.parentNode.replaceChild(textNode, span);
       }
     }
 
-    const visible = wrapped.filter((w) => wptranlateInjElementVisible(w.span));
-    const offScreen = wrapped.filter((w) => !wptranlateInjElementVisible(w.span));
+    const visible = wrapped.filter((w) => injElementVisible(w.span));
+    const offScreen = wrapped.filter((w) => !injElementVisible(w.span));
     const visibleSorted = [...visible].sort((a, b) => a.span.textContent.length - b.span.textContent.length);
     const firstBatch = visibleSorted.slice(0, VISIBLE_FIRST_BATCH);
     const restVisible = visibleSorted.slice(VISIBLE_FIRST_BATCH);
-    function wptranlateInjSliceTextBatches(arr, n) { const out = []; for (let i = 0; i < arr.length; i += n) out.push(arr.slice(i, i + n)); return out; }
+    function injSliceTextBatches(arr, n) { const out = []; for (let i = 0; i < arr.length; i += n) out.push(arr.slice(i, i + n)); return out; }
     const allBatches = wrapped.length
-      ? [firstBatch, ...wptranlateInjSliceTextBatches(restVisible, VISIBLE_BATCH), ...wptranlateInjSliceTextBatches(offScreen, OFFSCREEN_BATCH)]
+      ? [firstBatch, ...injSliceTextBatches(restVisible, VISIBLE_BATCH), ...injSliceTextBatches(offScreen, OFFSCREEN_BATCH)]
       : [];
     const siteTitle = (typeof document !== 'undefined' && document.title?.trim()) || '';
 
@@ -340,7 +372,7 @@ async function wteTranslateDocument(targetLanguage, sourceLanguageOverride, mess
     let aborted = false;
     for (const batch of allBatches) {
       if (batch.length === 0) continue;
-      const { wptranlate_enabledDomains: domainsNow = [] } = await chrome.storage.local.get('wptranlate_enabledDomains');
+      const domainsNow = await wteGetEnabledDomains();
       if (!domainsNow.includes(hostname)) {
         aborted = true;
         break;
@@ -353,7 +385,7 @@ async function wteTranslateDocument(targetLanguage, sourceLanguageOverride, mess
       let cacheDirty = false;
       for (let i = 0; i < batch.length; i++) {
         const { span } = batch[i];
-        const orig = span.dataset.wptranlateOrig ?? span.textContent;
+        const orig = span.dataset[nm.dataOrig] ?? span.textContent;
         const h = hashStr(orig);
         const cached = cache.entries?.[h];
         if (!isFirstBatch && cached && cached.t === orig && cached.r) {
@@ -368,14 +400,14 @@ async function wteTranslateDocument(targetLanguage, sourceLanguageOverride, mess
       if (uncachedTexts.length > 0 || isFirstBatch) {
         if (!badgeLit) {
           badgeLit = true;
-          chrome.runtime?.sendMessage?.({ action: 'wptranlate:start', tabId: messageTabId ?? undefined });
+          chrome.runtime?.sendMessage?.({ action: ev.start, tabId: messageTabId ?? undefined });
         }
         if (isFirstBatch && siteTitle && !titleTranslatedThisRun) {
           titleTranslatedThisRun = true;
           try {
             const translatedTitle = await translator.translate(siteTitle);
             if (translatedTitle?.trim()) {
-              if (typeof window !== 'undefined') window.__wptranlateOriginalTitle = document.title;
+              if (typeof window !== 'undefined') window[nm.stateOriginalTitle] = document.title;
               document.title = translatedTitle.trim();
               cache.title = { orig: siteTitle, tr: translatedTitle.trim() };
               cacheDirty = true;
@@ -386,7 +418,7 @@ async function wteTranslateDocument(targetLanguage, sourceLanguageOverride, mess
           const joined = uncachedTexts.join(BATCH_SEP);
           try {
             const translatedBatch = await translator.translate(joined);
-            const { wptranlate_enabledDomains: domainsAfter = [] } = await chrome.storage.local.get('wptranlate_enabledDomains');
+            const domainsAfter = await wteGetEnabledDomains();
             if (!domainsAfter.includes(hostname)) {
               aborted = true;
               break;
@@ -406,7 +438,7 @@ async function wteTranslateDocument(targetLanguage, sourceLanguageOverride, mess
         const i = uncachedIdx[u];
         const tr = translations[u];
         const { span } = batch[i];
-        const orig = span.dataset.wptranlateOrig ?? span.textContent;
+        const orig = span.dataset[nm.dataOrig] ?? span.textContent;
         const h = hashStr(orig);
         results[i] = tr;
         if (tr && tr !== orig && typeof localStorage !== 'undefined') {
@@ -421,16 +453,16 @@ async function wteTranslateDocument(targetLanguage, sourceLanguageOverride, mess
       for (let i = 0; i < batch.length; i++) {
         const { span } = batch[i];
         const tr = results[i];
-        const orig = span.dataset.wptranlateOrig ?? span.textContent;
-        span.classList.remove('wptranlate-wave');
+        const orig = span.dataset[nm.dataOrig] ?? span.textContent;
+        span.classList.remove(nm.classWave);
         if (tr && tr !== orig) {
           span.textContent = tr;
-          span.classList.add('wptranlate-cached');
-          span.dataset.wptranlateLang = targetLanguage;
+          span.classList.add(nm.classCached);
+          span.dataset[nm.dataLang] = targetLanguage;
           const textNode = span.firstChild;
           if (textNode) translated.add(textNode);
         } else {
-          const plain = document.createTextNode(span.dataset.wptranlateOrig ?? span.textContent ?? '');
+          const plain = document.createTextNode(span.dataset[nm.dataOrig] ?? span.textContent ?? '');
           if (span.parentNode) span.parentNode.replaceChild(plain, span);
         }
       }
@@ -440,46 +472,46 @@ async function wteTranslateDocument(targetLanguage, sourceLanguageOverride, mess
     }
 
     if (aborted) {
-      wptranlateInjRevertWaveWraps();
+      injRevertWaveWraps();
     } else {
       let attrAborted = false;
       if (attrJobs.length > 0) {
-        function wptranlateInjStampAttr(el, attr, origRaw, tr) {
+        function injStampAttr(el, attr, origRaw, tr) {
           if (attr === 'placeholder') {
-            el.dataset.wptranlateI18nPlaceholder = origRaw;
+            el.dataset[nm.dataI18nPlaceholder] = origRaw;
             el.placeholder = tr;
           } else if (attr === 'title') {
-            el.dataset.wptranlateI18nTitle = origRaw;
+            el.dataset[nm.dataI18nTitle] = origRaw;
             el.setAttribute('title', tr);
           } else if (attr === 'aria-label') {
-            el.dataset.wptranlateI18nAriaLabel = origRaw;
+            el.dataset[nm.dataI18nAriaLabel] = origRaw;
             el.setAttribute('aria-label', tr);
           } else if (attr === 'alt') {
-            el.dataset.wptranlateI18nAlt = origRaw;
+            el.dataset[nm.dataI18nAlt] = origRaw;
             el.setAttribute('alt', tr);
           } else if (attr === 'content') {
-            el.dataset.wptranlateI18nContent = origRaw;
+            el.dataset[nm.dataI18nContent] = origRaw;
             el.setAttribute('content', tr);
           } else if (attr === 'value') {
-            el.dataset.wptranlateI18nValue = origRaw;
+            el.dataset[nm.dataI18nValue] = origRaw;
             el.value = tr;
           }
-          el.dataset.wptranlateAttrLang = targetLanguage;
+          el.dataset[nm.dataAttrLang] = targetLanguage;
         }
-        const visA = attrJobs.filter((j) => wptranlateInjElementVisible(j.el));
-        const offA = attrJobs.filter((j) => !wptranlateInjElementVisible(j.el));
+        const visA = attrJobs.filter((j) => injElementVisible(j.el));
+        const offA = attrJobs.filter((j) => !injElementVisible(j.el));
         const visSortedA = [...visA].sort((a, b) => a.orig.trim().length - b.orig.trim().length);
         const firstAttrBatch = visSortedA.slice(0, VISIBLE_FIRST_BATCH);
         const restAttrVis = visSortedA.slice(VISIBLE_FIRST_BATCH);
-        function wptranlateInjSliceAttrBatches(arr, n) {
+        function injSliceAttrBatches(arr, n) {
           const out = [];
           for (let i = 0; i < arr.length; i += n) out.push(arr.slice(i, i + n));
           return out;
         }
-        const attrBatches = [firstAttrBatch, ...wptranlateInjSliceAttrBatches(restAttrVis, VISIBLE_BATCH), ...wptranlateInjSliceAttrBatches(offA, OFFSCREEN_BATCH)];
+        const attrBatches = [firstAttrBatch, ...injSliceAttrBatches(restAttrVis, VISIBLE_BATCH), ...injSliceAttrBatches(offA, OFFSCREEN_BATCH)];
         for (const batch of attrBatches) {
           if (batch.length === 0) continue;
-          const { wptranlate_enabledDomains: dna = [] } = await chrome.storage.local.get('wptranlate_enabledDomains');
+          const dna = await wteGetEnabledDomains();
           if (!dna.includes(hostname)) {
             attrAborted = true;
             break;
@@ -505,14 +537,14 @@ async function wteTranslateDocument(targetLanguage, sourceLanguageOverride, mess
           if (uncachedTexts.length > 0 || isFirstAttrBatch) {
             if (!badgeLit) {
               badgeLit = true;
-              chrome.runtime?.sendMessage?.({ action: 'wptranlate:start', tabId: messageTabId ?? undefined });
+              chrome.runtime?.sendMessage?.({ action: ev.start, tabId: messageTabId ?? undefined });
             }
             if (isFirstAttrBatch && siteTitle && !titleTranslatedThisRun) {
               titleTranslatedThisRun = true;
               try {
                 const translatedTitle = await translator.translate(siteTitle);
                 if (translatedTitle?.trim()) {
-                  if (typeof window !== 'undefined') window.__wptranlateOriginalTitle = document.title;
+                  if (typeof window !== 'undefined') window[nm.stateOriginalTitle] = document.title;
                   document.title = translatedTitle.trim();
                   cache.title = { orig: siteTitle, tr: translatedTitle.trim() };
                   attrCacheDirty = true;
@@ -523,7 +555,7 @@ async function wteTranslateDocument(targetLanguage, sourceLanguageOverride, mess
               const joined = uncachedTexts.join(BATCH_SEP);
               try {
                 const translatedBatch = await translator.translate(joined);
-                const { wptranlate_enabledDomains: dna2 = [] } = await chrome.storage.local.get('wptranlate_enabledDomains');
+                const dna2 = await wteGetEnabledDomains();
                 if (!dna2.includes(hostname)) {
                   attrAborted = true;
                   break;
@@ -557,14 +589,14 @@ async function wteTranslateDocument(targetLanguage, sourceLanguageOverride, mess
             const job = batch[i];
             const tr = results[i];
             const origT = job.orig.trim();
-            if (tr && tr !== origT) wptranlateInjStampAttr(job.el, job.attr, job.orig, tr);
+            if (tr && tr !== origT) injStampAttr(job.el, job.attr, job.orig, tr);
           }
           if (attrCacheDirty) saveCache(cache, targetLanguage);
           await new Promise((r) => setTimeout(r, 0));
         }
       }
       if (!attrAborted && typeof document !== 'undefined' && document.body) {
-        function wptranlateInjResyncAttrsFromCache(root) {
+        function injResyncAttrsFromCache(root) {
           const ent = cache.entries || {};
           const norm = (s) => (typeof s === 'string' ? s.trim() : '');
           const resolved = (orig) => {
@@ -575,67 +607,65 @@ async function wteTranslateDocument(targetLanguage, sourceLanguageOverride, mess
             return c && c.t === t && c.r ? c.r : null;
           };
           if (!root?.querySelectorAll) return;
-          root.querySelectorAll('[data-wptranlate-i18n-placeholder]').forEach((el) => {
-            const r = resolved(el.dataset.wptranlateI18nPlaceholder);
+          root.querySelectorAll('[data-' + cfg.prefix + '-i18n-placeholder]').forEach((el) => {
+            const r = resolved(el.dataset[nm.dataI18nPlaceholder]);
             if (r != null && el.placeholder !== r) el.placeholder = r;
           });
-          root.querySelectorAll('[data-wptranlate-i18n-aria-label]').forEach((el) => {
-            const r = resolved(el.dataset.wptranlateI18nAriaLabel);
+          root.querySelectorAll('[data-' + cfg.prefix + '-i18n-aria-label]').forEach((el) => {
+            const r = resolved(el.dataset[nm.dataI18nAriaLabel]);
             if (r != null && (el.getAttribute('aria-label') || '') !== r) el.setAttribute('aria-label', r);
           });
-          root.querySelectorAll('[data-wptranlate-i18n-title]').forEach((el) => {
-            const r = resolved(el.dataset.wptranlateI18nTitle);
+          root.querySelectorAll('[data-' + cfg.prefix + '-i18n-title]').forEach((el) => {
+            const r = resolved(el.dataset[nm.dataI18nTitle]);
             if (r != null && (el.getAttribute('title') || '') !== r) el.setAttribute('title', r);
           });
-          root.querySelectorAll('[data-wptranlate-i18n-alt]').forEach((el) => {
-            const r = resolved(el.dataset.wptranlateI18nAlt);
+          root.querySelectorAll('[data-' + cfg.prefix + '-i18n-alt]').forEach((el) => {
+            const r = resolved(el.dataset[nm.dataI18nAlt]);
             if (r != null && (el.getAttribute('alt') || '') !== r) el.setAttribute('alt', r);
           });
-          root.querySelectorAll('[data-wptranlate-i18n-content]').forEach((el) => {
-            const r = resolved(el.dataset.wptranlateI18nContent);
+          root.querySelectorAll('[data-' + cfg.prefix + '-i18n-content]').forEach((el) => {
+            const r = resolved(el.dataset[nm.dataI18nContent]);
             if (r != null && (el.getAttribute('content') || '') !== r) el.setAttribute('content', r);
           });
-          root.querySelectorAll('[data-wptranlate-i18n-value]').forEach((el) => {
-            const r = resolved(el.dataset.wptranlateI18nValue);
+          root.querySelectorAll('[data-' + cfg.prefix + '-i18n-value]').forEach((el) => {
+            const r = resolved(el.dataset[nm.dataI18nValue]);
             if (r != null && el.value !== r) el.value = r;
           });
           root.querySelectorAll('*').forEach((el) => {
-            if (el.shadowRoot && !wptranlateInjElInChromeUi(el)) wptranlateInjResyncAttrsFromCache(el.shadowRoot);
+            if (el.shadowRoot && !injElInChromeUi(el)) injResyncAttrsFromCache(el.shadowRoot);
           });
         }
-        wptranlateInjResyncAttrsFromCache(document.body);
+        injResyncAttrsFromCache(document.body);
       }
       if (attrAborted) {
-        wptranlateInjRevertWaveWraps();
-        if (typeof document !== 'undefined' && document.body && typeof self !== 'undefined' && self.wptranlateRestoreDatasetAttrsTree) {
-          self.wptranlateRestoreDatasetAttrsTree(document.body);
+        injRevertWaveWraps();
+        if (typeof document !== 'undefined' && document.body && typeof self !== 'undefined' && (self.wteRestoreDatasetAttrsTree || self.wptranlateRestoreDatasetAttrsTree || self.tsmplRestoreDatasetAttrsTree)) {
+          (self.wteRestoreDatasetAttrsTree || self.wptranlateRestoreDatasetAttrsTree || self.tsmplRestoreDatasetAttrsTree)(document.body);
         }
-      } else if (!self.__wptranlateScrollSetup) {
-        self.__wptranlateScrollSetup = true;
+      } else if (!self[nm.stateScrollSetup]) {
+        self[nm.stateScrollSetup] = true;
         let scrollTid;
         window.addEventListener('scroll', () => {
           clearTimeout(scrollTid);
-          scrollTid = setTimeout(() => {
-            wteTranslateDocument(targetLanguage);
-          }, 400);
+          scrollTid = setTimeout(() => { wteTranslateDocument(targetLanguage, sourceLanguageOverride, messageTabId, topFrameHtmlLang); }, scrollDebounceMs);
         }, { passive: true });
-        setTimeout(() => wteTranslateDocument(targetLanguage), 2000);
+        setTimeout(() => wteTranslateDocument(targetLanguage, sourceLanguageOverride, messageTabId, topFrameHtmlLang), scrollRetryMs);
       }
     }
     return { ok: Boolean(badgeLit) };
   } catch (e) {
     if (/Permission Policy|sandbox|access denied/i.test(e?.message || '')) return;
-    if (/invalid language tag/i.test(e?.message || '')) return wptranlateInjSilentSkip();
-    wptranlateInjToastErr(chrome.i18n.getMessage('uiErrTranslationFailed', [String(e?.message || e)]));
+    if (/invalid language tag/i.test(e?.message || '')) return injSilentSkip();
+    injToastErr(chrome.i18n.getMessage('uiErrTranslationFailed', [String(e?.message || e)]));
   } finally {
-    self.__wptranlateTranslating = false;
-    if (badgeLit) chrome.runtime?.sendMessage?.({ action: 'wptranlate:end', tabId: messageTabId ?? undefined });
-    if (self.__wptranlateTranslatePending) {
-      self.__wptranlateTranslatePending = false;
-      const args = self.__wptranlateLastTranslateArgs;
+    self[nm.stateTranslating] = false;
+    if (badgeLit) chrome.runtime?.sendMessage?.({ action: ev.end, tabId: messageTabId ?? undefined });
+    if (self[nm.stateTranslatePending]) {
+      self[nm.stateTranslatePending] = false;
+      const args = self[nm.stateLastArgs];
       const run = () => {
         if (args && args.length) {
-          wteTranslateDocument(args[0], args[1], args[2]);
+          wteTranslateDocument(args[0], args[1], args[2], args[3]);
         } else {
           wteTranslateDocument(targetLanguage, sourceLanguageOverride, messageTabId);
         }
@@ -650,6 +680,7 @@ async function wteTranslateDocument(targetLanguage, sourceLanguageOverride, mess
   g.WTE.translateDocument = wteTranslateDocument;
   if (typeof window !== 'undefined') {
     window.__wptranlateTranslate = wteTranslateDocument;
+    if (cfg.prefix === 'tsmpl') window.__tsmplTranslate = wteTranslateDocument;
   }
   if (typeof module !== 'undefined' && module.exports) {
     module.exports = { ...module.exports, wteTranslateDocument };

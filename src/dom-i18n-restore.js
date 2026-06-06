@@ -1,81 +1,58 @@
 /**
- * Восстановление placeholder / title / aria-label / … из data-wptranlate-i18n-* (включая open shadow DOM).
- * Подключается в страницу до инжекта функций из background.js (executeScript files).
+ * Restore placeholder / title / aria-label / … from data-{prefix}-i18n-* (including open shadow DOM).
  */
-(function () {
-  if (typeof self !== 'undefined' && self.__wptranlateDomI18nRestore) return;
+(function wteDomI18nRestoreModule(global) {
+  const g = global || (typeof self !== 'undefined' ? self : globalThis);
+  if (g.__wteDomI18nRestore) return;
 
-  const SELECTOR = [
-    '[data-wptranlate-i18n-placeholder]',
-    '[data-wptranlate-i18n-title]',
-    '[data-wptranlate-i18n-aria-label]',
-    '[data-wptranlate-i18n-alt]',
-    '[data-wptranlate-i18n-content]',
-    '[data-wptranlate-i18n-value]',
-  ].join(', ');
+  function wteBuildRestoreApi() {
+    const cfg = g.WTE?.wteMergeConfig?.() || {};
+    const p = cfg.prefix || 'wte';
+    const nm = cfg.names || g.WTE?.wteMakeNames?.(p, cfg.uiHostSuffixes);
+    const selector = [
+      `[data-${p}-i18n-placeholder]`,
+      `[data-${p}-i18n-title]`,
+      `[data-${p}-i18n-aria-label]`,
+      `[data-${p}-i18n-alt]`,
+      `[data-${p}-i18n-content]`,
+      `[data-${p}-i18n-value]`,
+    ].join(', ');
 
-  const RESTORE_STEPS = [
-    {
-      test: (el) => el.dataset.wptranlateI18nPlaceholder != null && el.dataset.wptranlateI18nPlaceholder !== '',
-      apply: (el) => {
-        el.placeholder = el.dataset.wptranlateI18nPlaceholder;
-        delete el.dataset.wptranlateI18nPlaceholder;
-      },
-    },
-    {
-      test: (el) => el.dataset.wptranlateI18nTitle != null && el.dataset.wptranlateI18nTitle !== '',
-      apply: (el) => {
-        el.setAttribute('title', el.dataset.wptranlateI18nTitle);
-        delete el.dataset.wptranlateI18nTitle;
-      },
-    },
-    {
-      test: (el) => el.dataset.wptranlateI18nAriaLabel != null && el.dataset.wptranlateI18nAriaLabel !== '',
-      apply: (el) => {
-        el.setAttribute('aria-label', el.dataset.wptranlateI18nAriaLabel);
-        delete el.dataset.wptranlateI18nAriaLabel;
-      },
-    },
-    {
-      test: (el) => el.dataset.wptranlateI18nAlt != null && el.dataset.wptranlateI18nAlt !== '',
-      apply: (el) => {
-        el.setAttribute('alt', el.dataset.wptranlateI18nAlt);
-        delete el.dataset.wptranlateI18nAlt;
-      },
-    },
-    {
-      test: (el) => el.dataset.wptranlateI18nContent != null && el.dataset.wptranlateI18nContent !== '',
-      apply: (el) => {
-        el.setAttribute('content', el.dataset.wptranlateI18nContent);
-        delete el.dataset.wptranlateI18nContent;
-      },
-    },
-    {
-      test: (el) => el.dataset.wptranlateI18nValue != null && el.dataset.wptranlateI18nValue !== '',
-      apply: (el) => {
-        el.value = el.dataset.wptranlateI18nValue;
-        delete el.dataset.wptranlateI18nValue;
-      },
-    },
-  ];
+    const steps = [
+      { key: nm.dataI18nPlaceholder, apply: (el, v) => { el.placeholder = v; } },
+      { key: nm.dataI18nTitle, apply: (el, v) => { el.setAttribute('title', v); } },
+      { key: nm.dataI18nAriaLabel, apply: (el, v) => { el.setAttribute('aria-label', v); } },
+      { key: nm.dataI18nAlt, apply: (el, v) => { el.setAttribute('alt', v); } },
+      { key: nm.dataI18nContent, apply: (el, v) => { el.setAttribute('content', v); } },
+      { key: nm.dataI18nValue, apply: (el, v) => { el.value = v; } },
+    ];
 
-  function wptranlateRestoreDatasetAttrsOnElement(el) {
-    RESTORE_STEPS.forEach(({ test, apply }) => {
-      if (test(el)) apply(el);
-    });
-    if (el.dataset.wptranlateAttrLang != null) delete el.dataset.wptranlateAttrLang;
+    function restoreOnElement(el) {
+      steps.forEach(({ key, apply }) => {
+        if (el.dataset[key] != null && el.dataset[key] !== '') {
+          apply(el, el.dataset[key]);
+          delete el.dataset[key];
+        }
+      });
+      if (el.dataset[nm.dataAttrLang] != null) delete el.dataset[nm.dataAttrLang];
+    }
+
+    function restoreTree(root) {
+      if (!root?.querySelectorAll) return;
+      root.querySelectorAll(selector).forEach(restoreOnElement);
+      root.querySelectorAll('*').forEach((el) => {
+        if (el.shadowRoot) restoreTree(el.shadowRoot);
+      });
+    }
+
+    return { restoreTree, prefix: p };
   }
 
-  function wptranlateRestoreDatasetAttrsTree(root) {
-    if (!root?.querySelectorAll) return;
-    root.querySelectorAll(SELECTOR).forEach(wptranlateRestoreDatasetAttrsOnElement);
-    root.querySelectorAll('*').forEach((el) => {
-      if (el.shadowRoot) wptranlateRestoreDatasetAttrsTree(el.shadowRoot);
-    });
-  }
+  const api = wteBuildRestoreApi();
+  g.wteRestoreDatasetAttrsTree = api.restoreTree;
+  g.__wteDomI18nRestore = true;
 
-  if (typeof self !== 'undefined') {
-    self.wptranlateRestoreDatasetAttrsTree = wptranlateRestoreDatasetAttrsTree;
-    self.__wptranlateDomI18nRestore = true;
-  }
+  // Legacy aliases (wptranlate / tsmpl)
+  if (api.prefix === 'wptranlate') g.wptranlateRestoreDatasetAttrsTree = api.restoreTree;
+  if (api.prefix === 'tsmpl') g.tsmplRestoreDatasetAttrsTree = api.restoreTree;
 })();

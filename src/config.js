@@ -74,6 +74,10 @@
       scrollDebounceMs: overrides?.scrollDebounceMs ?? base.scrollDebounceMs ?? 400,
       scrollRetryMs: overrides?.scrollRetryMs ?? base.scrollRetryMs ?? 2000,
       detectSampleLen: overrides?.detectSampleLen ?? base.detectSampleLen ?? 3000,
+      /** 'languageDetector' (default) | 'topFrameHtml' */
+      langDetection: overrides?.langDetection ?? base.langDetection ?? 'languageDetector',
+      /** When langDetection=topFrameHtml and declared source equals target, use latin/cyrillic heuristic */
+      langHeuristicLatinCyrillic: overrides?.langHeuristicLatinCyrillic ?? base.langHeuristicLatinCyrillic ?? false,
       logTag: overrides?.logTag ?? base.logTag ?? '[WebpageTranslateEngine]',
     };
   }
