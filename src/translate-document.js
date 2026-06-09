@@ -680,7 +680,8 @@ async function wteTranslateDocument(targetLanguage, sourceLanguageOverride, mess
   g.WTE.translateDocument = wteTranslateDocument;
   if (typeof window !== 'undefined') {
     window.__wptranlateTranslate = wteTranslateDocument;
-    if (cfg.prefix === 'tsmpl') window.__tsmplTranslate = wteTranslateDocument;
+    const bootPrefix = g.WTE?.wteMergeConfig?.()?.prefix ?? g.WTE_CONFIG?.prefix;
+    if (bootPrefix === 'tsmpl') window.__tsmplTranslate = wteTranslateDocument;
   }
   if (typeof module !== 'undefined' && module.exports) {
     module.exports = { ...module.exports, wteTranslateDocument };
