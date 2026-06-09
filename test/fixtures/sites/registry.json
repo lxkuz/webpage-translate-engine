@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "description": "Frozen real-world pages for engine integration tests. Add entries here and run npm run fetch:sites.",
+  "sites": [
+    {
+      "id": "berliner-zeitung",
+      "enabled": true,
+      "notes": "German news homepage; reproduces double hash.js inject via content script + executeScript."
+    },
+    {
+      "id": "bbc-hindi",
+      "enabled": true,
+      "notes": "Hindi BBC homepage; SSR-heavy, large inline bundle."
+    }
+  ]
+}

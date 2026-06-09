@@ -1,0 +1,64 @@
+{
+  "id": "berliner-zeitung",
+  "sourceUrl": "https://www.berliner-zeitung.de/",
+  "origin": "https://www.berliner-zeitung.de",
+  "expectedSourceLang": "de",
+  "targetLang": "en",
+  "minBodyTextLength": 500,
+  "sameOriginAssetPrefixes": [
+    "/js/",
+    "/css/"
+  ],
+  "sameOriginAssets": [
+    "/js/blz-bundle.js",
+    "/css/styles.css"
+  ],
+  "downloadSameOriginImages": false,
+  "externalAssets": [
+    {
+      "url": "https://cdn.jsdelivr.net/npm/swiper@11/swiper-bundle.min.js",
+      "localPath": "assets/vendor/swiper-bundle.min.js"
+    },
+    {
+      "url": "https://cdn.jsdelivr.net/npm/swiper@11/swiper-bundle.min.css",
+      "localPath": "assets/vendor/swiper-bundle.min.css"
+    }
+  ],
+  "stripScriptUrlPatterns": [
+    "cmpv2.ostdeutscheallgemeine.com",
+    "widgets.outbrain.com",
+    "cdn.qualitymedianetwork.de"
+  ],
+  "stripLinkUrlPatterns": [
+    "fonts.googleapis.com",
+    "fonts.gstatic.com"
+  ],
+  "fetchedAt": "2026-06-09T19:26:46.215Z",
+  "bytes": 1237875,
+  "assets": [
+    {
+      "from": "/js/blz-bundle.js",
+      "to": "./assets/js/blz-bundle.js"
+    },
+    {
+      "from": "/css/styles.css",
+      "to": "./assets/css/styles.css"
+    },
+    {
+      "from": "/css/styles.css?v=1781033089033",
+      "to": "./assets/css/styles.css"
+    },
+    {
+      "from": "/js/blz-bundle.js?v=1781033089033",
+      "to": "./assets/js/blz-bundle.js"
+    },
+    {
+      "from": "https://cdn.jsdelivr.net/npm/swiper@11/swiper-bundle.min.js",
+      "to": "./assets/vendor/swiper-bundle.min.js"
+    },
+    {
+      "from": "https://cdn.jsdelivr.net/npm/swiper@11/swiper-bundle.min.css",
+      "to": "./assets/vendor/swiper-bundle.min.css"
+    }
+  ]
+}

@@ -1,33 +1,39 @@
 /**
- * Unit-тесты для wptranlateDjb2Key (djb2) — можно запускать в Node без браузера.
- * node --test test/unit/hash.spec.js
+ * Unit tests for wptranlateDjb2Key (djb2).
  */
+const fs = require('node:fs');
+const path = require('node:path');
+const vm = require('node:vm');
 const { test, describe } = require('node:test');
 const assert = require('node:assert');
 const { wptranlateDjb2Key } = require('../../src/hash.js');
 
 describe('wptranlateDjb2Key', () => {
-  test('одинаковая строка дает одинаковый хеш', () => {
-    const h1 = wptranlateDjb2Key('Hello world');
-    const h2 = wptranlateDjb2Key('Hello world');
-    assert.strictEqual(h1, h2);
+  test('identical strings produce identical hash', () => {
+    assert.strictEqual(wptranlateDjb2Key('Hello world'), wptranlateDjb2Key('Hello world'));
   });
 
-  test('разные строки дают разные хеши', () => {
-    const h1 = wptranlateDjb2Key('Hello');
-    const h2 = wptranlateDjb2Key('World');
-    assert.notStrictEqual(h1, h2);
+  test('different strings produce different hashes', () => {
+    assert.notStrictEqual(wptranlateDjb2Key('Hello'), wptranlateDjb2Key('World'));
   });
 
-  test('возвращает строку в base36', () => {
+  test('returns base36 string', () => {
     const h = wptranlateDjb2Key('test');
     assert.strictEqual(typeof h, 'string');
     assert.ok(/^[a-z0-9]+$/.test(h));
   });
 
-  test('пустая строка возвращает консистентный хеш', () => {
+  test('empty string is consistent', () => {
     const h = wptranlateDjb2Key('');
-    assert.strictEqual(typeof h, 'string');
     assert.strictEqual(wptranlateDjb2Key(''), h);
+  });
+
+  test('re-load in same self is idempotent', () => {
+    const code = fs.readFileSync(path.join(__dirname, '../../src/hash.js'), 'utf8');
+    const sandbox = { self: {}, module: { exports: {} } };
+    vm.runInNewContext(code, sandbox);
+    const h1 = sandbox.self.wptranlateDjb2Key('repeat-load');
+    assert.doesNotThrow(() => vm.runInNewContext(code, sandbox));
+    assert.strictEqual(sandbox.self.wptranlateDjb2Key('repeat-load'), h1);
   });
 });

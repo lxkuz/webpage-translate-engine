@@ -1,0 +1,53 @@
+{
+  "id": "bbc-hindi",
+  "sourceUrl": "https://www.bbc.com/hindi",
+  "origin": "https://www.bbc.com",
+  "expectedSourceLang": "hi",
+  "targetLang": "en",
+  "minBodyTextLength": 200,
+  "sameOriginAssetPrefixes": [],
+  "sameOriginAssets": [
+    "/favicon.ico"
+  ],
+  "downloadSameOriginImages": false,
+  "externalAssets": [
+    {
+      "url": "https://gn-web-assets.api.bbc.com/ngas/latest/dotcom-bootstrap.js",
+      "localPath": "assets/vendor/dotcom-bootstrap.js"
+    },
+    {
+      "url": "https://gn-web-assets.api.bbc.com/ngas/latest/dotcom-bootstrap-legacy.js",
+      "localPath": "assets/vendor/dotcom-bootstrap-legacy.js"
+    },
+    {
+      "url": "https://static.bbci.co.uk/frameworks/requirejs/0.13.0/sharedmodules/require.js",
+      "localPath": "assets/vendor/require.js"
+    }
+  ],
+  "stripScriptUrlPatterns": [
+    "static.chartbeat.com",
+    "mybbc-analytics",
+    "ping.chartbeat.net"
+  ],
+  "stripLinkUrlPatterns": [],
+  "fetchedAt": "2026-06-09T19:26:49.124Z",
+  "bytes": 773733,
+  "assets": [
+    {
+      "from": "/favicon.ico",
+      "to": "./assets/favicon.ico"
+    },
+    {
+      "from": "https://gn-web-assets.api.bbc.com/ngas/latest/dotcom-bootstrap.js",
+      "to": "./assets/vendor/dotcom-bootstrap.js"
+    },
+    {
+      "from": "https://gn-web-assets.api.bbc.com/ngas/latest/dotcom-bootstrap-legacy.js",
+      "to": "./assets/vendor/dotcom-bootstrap-legacy.js"
+    },
+    {
+      "from": "https://static.bbci.co.uk/frameworks/requirejs/0.13.0/sharedmodules/require.js",
+      "to": "./assets/vendor/require.js"
+    }
+  ]
+}

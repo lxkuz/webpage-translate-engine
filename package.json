@@ -13,9 +13,16 @@
     "README.md"
   ],
   "scripts": {
-    "test:unit": "node --test test/unit/*.spec.js"
+    "test:unit": "node --test test/unit/*.spec.js",
+    "test:sites": "playwright test",
+    "test": "npm run test:unit && npm run test:sites",
+    "fetch:sites": "node scripts/fetch-site-fixture.mjs",
+    "server:test": "node test/helpers/site-server.js"
   },
   "engines": {
     "node": ">=18"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.49.0"
   }
 }

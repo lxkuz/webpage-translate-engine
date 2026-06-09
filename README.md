@@ -85,6 +85,38 @@ Return values from `translateDocument`:
 const { wteMainFrameSkippedSameLang, wteInjectSucceeded } = require('./src/frame-results.js');
 ```
 
+## Site fixture tests
+
+Real-world page snapshots live under `test/fixtures/sites/`. Refresh and run:
+
+```bash
+npm install
+npx playwright install chromium   # once
+npm run fetch:sites               # download/update frozen pages
+npm run test:sites                # Playwright integration tests
+npm test                          # unit + site fixtures
+```
+
+See `test/fixtures/sites/README.md` to add new sites to the registry.
+
+## Vendoring into an extension
+
+Use a **git submodule** (recommended for [trnslt_one_button](https://github.com/lxkuz/trnslt_one_button)):
+
+```bash
+git submodule add -b main https://github.com/lxkuz/webpage-translate-engine.git extension/vendor/webpage-translate-engine
+git submodule update --init --recursive
+```
+
+Pin a release tag or commit in the parent repo when you need a stable snapshot:
+
+```bash
+cd extension/vendor/webpage-translate-engine
+git checkout v0.1.0   # or a commit SHA
+cd ../../..
+git add extension/vendor/webpage-translate-engine
+```
+
 ## Translate Webpage preset
 
 `presets/wptranlate.js` matches the [trnslt_one_button](https://github.com/lxkuz/trnslt_one_button) extension DOM markers and storage keys.
