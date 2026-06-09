@@ -48,13 +48,8 @@ async function wteTranslateDocument(targetLanguage, sourceLanguageOverride, mess
   function injToastErr(msg) {
     try {
       console.error(cfg.logTag || '[WebpageTranslateEngine]', msg);
-      if (typeof window !== 'undefined' && window === window.top && document.body) {
-        const el = document.createElement('div');
-        el.id = nm.errorToastId;
-        el.style.cssText = 'position:fixed;bottom:16px;left:50%;transform:translateX(-50%);max-width:90%;padding:10px 16px;background-color:#1e1826;color:#f1f5f9;border:none;border-radius:8px;font-size:14px;z-index:2147483647;box-shadow:0 4px 12px rgba(0,0,0,.3),0 0 0 1px rgba(170,95,191,.15);';
-        el.textContent = msg;
-        document.body.appendChild(el);
-        setTimeout(() => el.remove(), 6000);
+      if (typeof window !== 'undefined' && window === window.top) {
+        g.WTE?.wteMountToast?.(cfg, 'error', { id: nm.errorToastId, text: msg });
       }
     } catch (_) {}
   }

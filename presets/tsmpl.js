@@ -19,5 +19,14 @@
       'quick-toggle-toast',
     ],
     logTag: '[Translate Web Page]',
+    toasts: {
+      quickToggle: {
+        css:
+          'position:fixed;bottom:16px;left:50%;transform:translateX(-50%);padding:8px 16px;' +
+          'background-color:#03c36d;color:#ffffff;border:none;border-radius:8px;font-size:13px;' +
+          'z-index:2147483647;box-shadow:0 4px 12px rgba(0,0,0,.2);',
+        durationMs: 1500,
+      },
+    },
   };
 })();

@@ -58,6 +58,25 @@ Set on `self.WTE_CONFIG` in a preset file (see `presets/wptranlate.js`):
 | `enabledDomainsStorageKey` | `chrome.storage.local` key listing hostnames allowed to translate |
 | `events.start` / `events.end` | `chrome.runtime.sendMessage` action names |
 | `uiHostSuffixes` | Shadow host id suffixes skipped during DOM walk |
+| `toasts.quickToggle` | `{ css, durationMs }` — «clearing cache, translating again…» (see `revertAndClearCaches`) |
+| `toasts.error` | `{ css, durationMs }` — translation errors in `translateDocument` |
+
+Toast CSS is **full** `element.style.cssText` strings. Defaults are neutral slate/dark; each preset sets its own branding (see `presets/wptranlate.js`).
+
+```javascript
+self.WTE_CONFIG = {
+  prefix: 'myext',
+  toasts: {
+    quickToggle: {
+      css: 'position:fixed;bottom:16px;left:50%;transform:translateX(-50%);background:#9333ea;color:#fff;…',
+      durationMs: 1500,
+    },
+    error: { css: '…', durationMs: 6000 },
+  },
+};
+```
+
+After scripts load, `self.WTE.wteMountToast(cfg, 'quickToggle', { id, text })` is also available for custom injectors.
 
 ## Public API (page context)
 
@@ -70,6 +89,7 @@ After scripts load, `self.WTE` exposes:
 | `revertAndClearCaches()` | Restore originals + wipe cache |
 | `wteMergeConfig(overrides)` | Merge runtime config |
 | `wteMakeNames(prefix)` | Build selectors / dataset names |
+| `wteMountToast(cfg, kind, { id, text })` | Show configured in-page toast |
 
 Return values from `translateDocument`:
 

@@ -14,6 +14,56 @@
     'status-bar',
   ];
 
+  /** Neutral defaults; presets override via WTE_CONFIG.toasts. */
+  const WTE_DEFAULT_TOASTS = {
+    quickToggle: {
+      css:
+        'position:fixed;bottom:16px;left:50%;transform:translateX(-50%);max-width:min(420px,calc(100vw - 24px));' +
+        'padding:10px 16px;background-color:#334155;color:#ffffff;border-radius:8px;font-size:13px;' +
+        'z-index:2147483647;box-shadow:0 4px 12px rgba(0,0,0,.2);',
+      durationMs: 1500,
+    },
+    error: {
+      css:
+        'position:fixed;bottom:16px;left:50%;transform:translateX(-50%);max-width:90%;padding:10px 16px;' +
+        'background-color:#1e1826;color:#f1f5f9;border:none;border-radius:8px;font-size:14px;' +
+        'z-index:2147483647;box-shadow:0 4px 12px rgba(0,0,0,.3),0 0 0 1px rgba(170,95,191,.15);',
+      durationMs: 6000,
+    },
+  };
+
+  function wteMergeToastSpec(key, overrides, base) {
+    const o = overrides?.toasts?.[key] ?? {};
+    const b = base?.toasts?.[key] ?? {};
+    const d = WTE_DEFAULT_TOASTS[key] || {};
+    return {
+      css: o.css ?? b.css ?? d.css ?? '',
+      durationMs: o.durationMs ?? b.durationMs ?? d.durationMs ?? 3000,
+    };
+  }
+
+  /**
+   * Mount an in-page toast from cfg.toasts[kind] (css + durationMs).
+   * @returns {HTMLElement|null}
+   */
+  function wteMountToast(cfg, kind, { id, text } = {}) {
+    const spec = cfg?.toasts?.[kind];
+    if (!spec?.css || typeof document === 'undefined') return null;
+    const root = document.body || document.documentElement;
+    if (!root) return null;
+    try {
+      const el = document.createElement('div');
+      if (id) el.id = id;
+      el.style.cssText = spec.css;
+      if (text != null) el.textContent = text;
+      root.appendChild(el);
+      setTimeout(() => { try { el.remove(); } catch (_) {} }, spec.durationMs ?? 3000);
+      return el;
+    } catch (_) {
+      return null;
+    }
+  }
+
   function wteMakeNames(prefix, uiHostSuffixes) {
     const p = (prefix || 'wte').replace(/-+$/g, '');
     const hosts = (uiHostSuffixes || DEFAULT_UI_HOST_IDS).map((s) => `${p}-${s}`);
@@ -79,10 +129,14 @@
       /** When langDetection=topFrameHtml and declared source equals target, use latin/cyrillic heuristic */
       langHeuristicLatinCyrillic: overrides?.langHeuristicLatinCyrillic ?? base.langHeuristicLatinCyrillic ?? false,
       logTag: overrides?.logTag ?? base.logTag ?? '[WebpageTranslateEngine]',
+      toasts: {
+        quickToggle: wteMergeToastSpec('quickToggle', overrides, base),
+        error: wteMergeToastSpec('error', overrides, base),
+      },
     };
   }
 
-  const api = { wteMakeNames, wteMergeConfig, DEFAULT_UI_HOST_IDS };
+  const api = { wteMakeNames, wteMergeConfig, wteMountToast, WTE_DEFAULT_TOASTS, DEFAULT_UI_HOST_IDS };
   g.WTE = g.WTE || {};
   Object.assign(g.WTE, api);
 
