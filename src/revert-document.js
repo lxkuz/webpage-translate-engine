@@ -81,7 +81,7 @@
       if (typeof document !== 'undefined' && document.body) {
         const el = document.createElement('div');
         el.id = nm.quickToggleToastId;
-        el.style.cssText = 'position:fixed;bottom:16px;left:50%;transform:translateX(-50%);padding:8px 16px;background-color:#03c36d;color:#ffffff;border:none;border-radius:8px;font-size:13px;z-index:2147483647;box-shadow:0 4px 12px rgba(0,0,0,.2);';
+        el.style.cssText = 'position:fixed;bottom:16px;left:50%;transform:translateX(-50%);max-width:min(420px,calc(100vw - 24px));padding:10px 16px;background-color:#9333ea;color:#ffffff;border:2px solid #e9d5ff;border-radius:10px;font-size:13px;font-weight:600;line-height:1.45;z-index:2147483647;box-shadow:0 8px 28px rgba(147,51,234,.55),0 0 0 1px rgba(255,255,255,.2);text-shadow:0 1px 2px rgba(0,0,0,.18);';
         el.textContent = chrome.i18n.getMessage('uiQuickToggleToast');
         document.body.appendChild(el);
         setTimeout(() => el.remove(), 1500);
