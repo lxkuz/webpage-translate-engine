@@ -132,7 +132,7 @@ Pin a release tag or commit in the parent repo when you need a stable snapshot:
 
 ```bash
 cd extension/vendor/webpage-translate-engine
-git checkout v0.1.0   # or a commit SHA
+git checkout v1.0.1   # or a commit SHA
 cd ../../..
 git add extension/vendor/webpage-translate-engine
 ```
