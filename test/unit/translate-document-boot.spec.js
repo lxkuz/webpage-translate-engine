@@ -30,6 +30,7 @@ function loadEngineStack(presetFile) {
     'src/hash.js',
     'src/lang-tag.js',
     'src/lang-detect.js',
+    'src/translate-text.js',
     'src/cache.js',
     'src/dom-i18n-restore.js',
     'src/translate-document.js',
@@ -43,6 +44,7 @@ function loadEngineStack(presetFile) {
 test('translate-document boots with wptranlate preset', () => {
   const g = loadEngineStack('presets/wptranlate.js');
   assert.strictEqual(typeof g.WTE?.translateDocument, 'function');
+  assert.strictEqual(typeof g.WTE?.translateText, 'function');
   assert.strictEqual(typeof g.__wptranlateTranslate, 'function');
 });
 

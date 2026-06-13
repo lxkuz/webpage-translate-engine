@@ -12,6 +12,7 @@
     'same-lang-toast',
     'https-only-toast',
     'status-bar',
+    'selection-popup',
   ];
 
   /** Neutral defaults; presets override via WTE_CONFIG.toasts. */

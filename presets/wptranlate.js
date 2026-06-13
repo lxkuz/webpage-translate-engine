@@ -24,6 +24,7 @@
       'same-lang-toast',
       'https-only-toast',
       'status-bar',
+      'selection-popup',
     ],
     logTag: '[Translate Webpage]',
     toasts: {

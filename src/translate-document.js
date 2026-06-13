@@ -86,87 +86,118 @@ async function wteTranslateDocument(targetLanguage, sourceLanguageOverride, mess
 
   const translated = (self[nm.stateTranslated] = self[nm.stateTranslated] || new WeakSet());
 
-  const injNormalizeLang = (typeof self !== 'undefined' && (self.wteNormalizeLangTag || self.wptranlateNormalizeLangTag)) || ((tag) => {
-    if (tag == null || typeof tag !== 'string') return null;
-    const primary = tag.trim().split(/[-_]/)[0].toLowerCase();
-    if (!primary || primary === 'x' || /[%{}]/.test(primary) || !/^[a-z]{2,3}$/.test(primary)) return null;
-    return primary;
-  });
-  const injDetectLang = (typeof self !== 'undefined' && (self.wteDetectLangFromText || self.wptranlateDetectLangFromText)) || (async () => null);
   const injSilentSkip = () => ({ skipped: true, reason: 'same-lang' });
+  const wteResolveLanguages = g.WTE?.wteResolveLanguages;
+  const wteCreateTranslator = g.WTE?.wteCreateTranslator;
 
   try {
-    // Язык: из попапа (sourceLanguageOverride) или LanguageDetector + html[lang]
-    const targetLangNorm = injNormalizeLang(targetLanguage);
-    if (!targetLangNorm) return injSilentSkip();
-    targetLanguage = targetLangNorm;
-
     const sample = document.body?.innerText?.slice(0, detectSampleLen) || '';
 
     let sourceLanguage;
-    if (sourceLanguageOverride && sourceLanguageOverride.trim()) {
-      sourceLanguage = injNormalizeLang(sourceLanguageOverride);
-      if (!sourceLanguage) return injSilentSkip();
-    } else if (cfg.langDetection === 'topFrameHtml') {
-      let declaredLang = '';
-      if (typeof topFrameHtmlLang === 'string') {
-        declaredLang = topFrameHtmlLang.trim();
-      } else {
-        try {
-          declaredLang = (window.top.document.documentElement?.lang || '').trim();
-        } catch (_) {
-          declaredLang = (document.documentElement?.lang || '').trim();
-        }
-      }
-      sourceLanguage = injNormalizeLang(declaredLang || 'en');
-      if (!sourceLanguage) return injSilentSkip();
-      if (cfg.langHeuristicLatinCyrillic && sourceLanguage === targetLanguage) {
-        const cyrillic = (sample.match(/[\u0400-\u04FF]/g) || []).length;
-        const latin = (sample.match(/[a-zA-Z]/g) || []).length;
-        if (latin > cyrillic * 1.5) sourceLanguage = 'en';
-        else return injSilentSkip();
-      }
-    } else {
-      const detected = await injDetectLang(sample, { normalizeLang: injNormalizeLang });
-      const fromHtml = injNormalizeLang(document.documentElement?.lang);
-      sourceLanguage = detected?.lang ?? fromHtml;
-      if (!sourceLanguage) return injSilentSkip();
-    }
-    if (sourceLanguage === targetLanguage) return injSilentSkip();
-
-    let avail;
-    try {
-      avail = await Translator.availability({ sourceLanguage, targetLanguage });
-    } catch (e) {
-      if (/invalid language tag/i.test(e?.message || '')) return injSilentSkip();
-      throw e;
-    }
-    if (avail === 'unavailable') {
-      injToastErr(chrome.i18n.getMessage('uiErrModelUnavailable'));
-      return;
-    }
-    const needsDownload = avail === 'downloadable' || avail === 'downloading';
-
     let translator;
-    try {
-      translator = await Translator.create({
-        sourceLanguage,
+    if (typeof wteResolveLanguages === 'function' && typeof wteCreateTranslator === 'function') {
+      const langResult = await wteResolveLanguages(
         targetLanguage,
-        ...(needsDownload && typeof chrome !== 'undefined' && chrome.runtime?.sendMessage && {
-          monitor(m) {
-            m.addEventListener('downloadprogress', (e) => {
-              const total = e.total && e.total > 0 ? e.total : 1;
-              const pct = Math.min(100, Math.round((e.loaded / total) * 100));
-              chrome.runtime.sendMessage({ action: ev.downloadProgress, loaded: e.loaded, total: e.total, percent: pct, tabId: messageTabId ?? undefined }).catch(() => {});
-            });
-          },
-        }),
+        sourceLanguageOverride,
+        sample,
+        { topFrameHtmlLang, detectSampleLen },
+      );
+      if (langResult.skipped) return injSilentSkip();
+
+      const trResult = await wteCreateTranslator(
+        langResult.sourceLanguage,
+        langResult.targetLanguage,
+        { messageTabId },
+      );
+      if (trResult.skipped) return injSilentSkip();
+      if (!trResult.ok) {
+        if (trResult.reason === 'unavailable') {
+          injToastErr(chrome.i18n.getMessage('uiErrModelUnavailable'));
+        } else if (trResult.reason === 'create-error') {
+          injToastErr(chrome.i18n.getMessage('uiErrTranslatorCreate', [trResult.error || 'unknown']));
+        }
+        return;
+      }
+      sourceLanguage = langResult.sourceLanguage;
+      targetLanguage = langResult.targetLanguage;
+      translator = trResult.translator;
+    } else {
+      /* Fallback when translate-text.js is not loaded (legacy inject order). */
+      const injNormalizeLang = (typeof self !== 'undefined' && (self.wteNormalizeLangTag || self.wptranlateNormalizeLangTag)) || ((tag) => {
+        if (tag == null || typeof tag !== 'string') return null;
+        const primary = tag.trim().split(/[-_]/)[0].toLowerCase();
+        if (!primary || primary === 'x' || /[%{}]/.test(primary) || !/^[a-z]{2,3}$/.test(primary)) return null;
+        return primary;
       });
-    } catch (e) {
-      if (/user gesture/i.test(e?.message || '')) return;
-      if (/Permission Policy|sandbox|access denied/i.test(e?.message || '')) return; // iframe/sandbox — тихо пропускаем
-      injToastErr(chrome.i18n.getMessage('uiErrTranslatorCreate', [String(e?.message || e)]));
-      return;
+      const injDetectLang = (typeof self !== 'undefined' && (self.wteDetectLangFromText || self.wptranlateDetectLangFromText)) || (async () => null);
+
+      const targetLangNorm = injNormalizeLang(targetLanguage);
+      if (!targetLangNorm) return injSilentSkip();
+      targetLanguage = targetLangNorm;
+
+      if (sourceLanguageOverride && sourceLanguageOverride.trim()) {
+        sourceLanguage = injNormalizeLang(sourceLanguageOverride);
+        if (!sourceLanguage) return injSilentSkip();
+      } else if (cfg.langDetection === 'topFrameHtml') {
+        let declaredLang = '';
+        if (typeof topFrameHtmlLang === 'string') {
+          declaredLang = topFrameHtmlLang.trim();
+        } else {
+          try {
+            declaredLang = (window.top.document.documentElement?.lang || '').trim();
+          } catch (_) {
+            declaredLang = (document.documentElement?.lang || '').trim();
+          }
+        }
+        sourceLanguage = injNormalizeLang(declaredLang || 'en');
+        if (!sourceLanguage) return injSilentSkip();
+        if (cfg.langHeuristicLatinCyrillic && sourceLanguage === targetLanguage) {
+          const cyrillic = (sample.match(/[\u0400-\u04FF]/g) || []).length;
+          const latin = (sample.match(/[a-zA-Z]/g) || []).length;
+          if (latin > cyrillic * 1.5) sourceLanguage = 'en';
+          else return injSilentSkip();
+        }
+      } else {
+        const detected = await injDetectLang(sample, { normalizeLang: injNormalizeLang });
+        const fromHtml = injNormalizeLang(document.documentElement?.lang);
+        sourceLanguage = detected?.lang ?? fromHtml;
+        if (!sourceLanguage) return injSilentSkip();
+      }
+      if (sourceLanguage === targetLanguage) return injSilentSkip();
+
+      let avail;
+      try {
+        avail = await Translator.availability({ sourceLanguage, targetLanguage });
+      } catch (e) {
+        if (/invalid language tag/i.test(e?.message || '')) return injSilentSkip();
+        throw e;
+      }
+      if (avail === 'unavailable') {
+        injToastErr(chrome.i18n.getMessage('uiErrModelUnavailable'));
+        return;
+      }
+      const needsDownload = avail === 'downloadable' || avail === 'downloading';
+
+      try {
+        translator = await Translator.create({
+          sourceLanguage,
+          targetLanguage,
+          ...(needsDownload && typeof chrome !== 'undefined' && chrome.runtime?.sendMessage && {
+            monitor(m) {
+              m.addEventListener('downloadprogress', (e) => {
+                const total = e.total && e.total > 0 ? e.total : 1;
+                const pct = Math.min(100, Math.round((e.loaded / total) * 100));
+                chrome.runtime.sendMessage({ action: ev.downloadProgress, loaded: e.loaded, total: e.total, percent: pct, tabId: messageTabId ?? undefined }).catch(() => {});
+              });
+            },
+          }),
+        });
+      } catch (e) {
+        if (/user gesture/i.test(e?.message || '')) return;
+        if (/Permission Policy|sandbox|access denied/i.test(e?.message || '')) return;
+        injToastErr(chrome.i18n.getMessage('uiErrTranslatorCreate', [String(e?.message || e)]));
+        return;
+      }
     }
 
     function injNodeInChromeUi(node) {
