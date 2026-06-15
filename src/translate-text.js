@@ -110,27 +110,28 @@
 
     if (avail === 'unavailable') return { ok: false, reason: 'unavailable' };
     const needsDownload = avail === 'downloadable' || avail === 'downloading';
+    const emitProgress = g.WTE?.wteEmitDownloadProgress;
 
     try {
+      if (needsDownload && emitProgress) {
+        emitProgress(ev, messageTabId, 0, 100, 0);
+      }
       const translator = await Translator.create({
         sourceLanguage,
         targetLanguage,
-        ...(needsDownload && typeof chrome !== 'undefined' && chrome.runtime?.sendMessage && {
+        ...(needsDownload && emitProgress && {
           monitor(m) {
             m.addEventListener('downloadprogress', (e) => {
               const total = e.total && e.total > 0 ? e.total : 1;
               const pct = Math.min(100, Math.round((e.loaded / total) * 100));
-              chrome.runtime.sendMessage({
-                action: ev.downloadProgress,
-                loaded: e.loaded,
-                total: e.total,
-                percent: pct,
-                tabId: messageTabId ?? undefined,
-              }).catch(() => {});
+              emitProgress(ev, messageTabId, e.loaded, e.total, pct);
             });
           },
         }),
       });
+      if (needsDownload && emitProgress) {
+        emitProgress(ev, messageTabId, 100, 100, 100);
+      }
       return { ok: true, translator, sourceLanguage, targetLanguage };
     } catch (e) {
       const msg = String(e?.message || e);

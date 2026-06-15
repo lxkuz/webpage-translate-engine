@@ -1,6 +1,6 @@
 {
   "name": "@lxkuz/webpage-translate-engine",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Reusable Chrome Built-in Translator engine for extension page-context injection",
   "license": "MIT",
   "repository": {

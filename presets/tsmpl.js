@@ -12,6 +12,7 @@
       start: 'tsmpl:start',
       end: 'tsmpl:end',
       downloadProgress: 'tsmpl:download-progress',
+      translationStarted: 'tsmpl:translation-started',
     },
     uiHostSuffixes: [
       'page-panel',

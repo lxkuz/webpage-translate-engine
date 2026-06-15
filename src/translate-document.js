@@ -177,21 +177,28 @@ async function wteTranslateDocument(targetLanguage, sourceLanguageOverride, mess
         return;
       }
       const needsDownload = avail === 'downloadable' || avail === 'downloading';
+      const emitProgress = g.WTE?.wteEmitDownloadProgress;
+      if (needsDownload && emitProgress) {
+        emitProgress(ev, messageTabId, 0, 100, 0);
+      }
 
       try {
         translator = await Translator.create({
           sourceLanguage,
           targetLanguage,
-          ...(needsDownload && typeof chrome !== 'undefined' && chrome.runtime?.sendMessage && {
+          ...(needsDownload && emitProgress && {
             monitor(m) {
               m.addEventListener('downloadprogress', (e) => {
                 const total = e.total && e.total > 0 ? e.total : 1;
                 const pct = Math.min(100, Math.round((e.loaded / total) * 100));
-                chrome.runtime.sendMessage({ action: ev.downloadProgress, loaded: e.loaded, total: e.total, percent: pct, tabId: messageTabId ?? undefined }).catch(() => {});
+                emitProgress(ev, messageTabId, e.loaded, e.total, pct);
               });
             },
           }),
         });
+        if (needsDownload && emitProgress) {
+          emitProgress(ev, messageTabId, 100, 100, 100);
+        }
       } catch (e) {
         if (/user gesture/i.test(e?.message || '')) return;
         if (/Permission Policy|sandbox|access denied/i.test(e?.message || '')) return;
@@ -340,7 +347,7 @@ async function wteTranslateDocument(targetLanguage, sourceLanguageOverride, mess
       const style = document.createElement('style');
       style.id = nm.waveStylesId;
       style.textContent = `
-        .' + nm.classWave + ' {
+        .${nm.classWave} {
           background-image: linear-gradient(90deg,
             transparent 0%,
             transparent 40%,
@@ -349,9 +356,9 @@ async function wteTranslateDocument(targetLanguage, sourceLanguageOverride, mess
             transparent 100%);
           background-size: 200% 100%;
           background-repeat: no-repeat;
-          animation: ' + nm.prefix + '-wave-flow 2.68s ease-in-out infinite;
+          animation: ${nm.prefix}-wave-flow 2.68s ease-in-out infinite;
         }
-        @keyframes ' + nm.prefix + '-wave-flow {
+        @keyframes ${nm.prefix}-wave-flow {
           0% { background-position: 200% 0; }
           100% { background-position: -200% 0; }
         }
@@ -396,6 +403,7 @@ async function wteTranslateDocument(targetLanguage, sourceLanguageOverride, mess
 
     let titleTranslatedThisRun = false;
     let aborted = false;
+    let translationStartedSent = false;
     for (const batch of allBatches) {
       if (batch.length === 0) continue;
       const domainsNow = await wteGetEnabledDomains();
@@ -494,6 +502,13 @@ async function wteTranslateDocument(targetLanguage, sourceLanguageOverride, mess
       }
 
       if (cacheDirty) saveCache(cache, targetLanguage);
+      if (
+        ev.translationStarted && !translationStartedSent
+        && typeof window !== 'undefined' && window === window.top && messageTabId
+      ) {
+        translationStartedSent = true;
+        chrome.runtime?.sendMessage?.({ action: ev.translationStarted, tabId: messageTabId });
+      }
       await new Promise((r) => setTimeout(r, 0));
     }
 
@@ -618,6 +633,13 @@ async function wteTranslateDocument(targetLanguage, sourceLanguageOverride, mess
             if (tr && tr !== origT) injStampAttr(job.el, job.attr, job.orig, tr);
           }
           if (attrCacheDirty) saveCache(cache, targetLanguage);
+          if (
+            ev.translationStarted && !translationStartedSent
+            && typeof window !== 'undefined' && window === window.top && messageTabId
+          ) {
+            translationStartedSent = true;
+            chrome.runtime?.sendMessage?.({ action: ev.translationStarted, tabId: messageTabId });
+          }
           await new Promise((r) => setTimeout(r, 0));
         }
       }

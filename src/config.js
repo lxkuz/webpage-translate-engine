@@ -44,6 +44,20 @@
   }
 
   /**
+   * Notify extension UI about translation-model download progress (panel / popup).
+   */
+  function wteEmitDownloadProgress(ev, messageTabId, loaded, total, percent) {
+    if (!ev?.downloadProgress || typeof chrome === 'undefined' || !chrome.runtime?.sendMessage) return;
+    chrome.runtime.sendMessage({
+      action: ev.downloadProgress,
+      loaded,
+      total,
+      percent,
+      tabId: messageTabId ?? undefined,
+    }).catch(() => {});
+  }
+
+  /**
    * Mount an in-page toast from cfg.toasts[kind] (css + durationMs).
    * @returns {HTMLElement|null}
    */
@@ -115,6 +129,7 @@
         start: overrides?.events?.start ?? base.events?.start ?? 'wte:translate-start',
         end: overrides?.events?.end ?? base.events?.end ?? 'wte:translate-end',
         downloadProgress: overrides?.events?.downloadProgress ?? base.events?.downloadProgress ?? 'wte:download-progress',
+        translationStarted: overrides?.events?.translationStarted ?? base.events?.translationStarted ?? null,
       },
       batch: {
         visibleFirst: overrides?.batch?.visibleFirst ?? base.batch?.visibleFirst ?? 20,
@@ -137,7 +152,7 @@
     };
   }
 
-  const api = { wteMakeNames, wteMergeConfig, wteMountToast, WTE_DEFAULT_TOASTS, DEFAULT_UI_HOST_IDS };
+  const api = { wteMakeNames, wteMergeConfig, wteMountToast, wteEmitDownloadProgress, WTE_DEFAULT_TOASTS, DEFAULT_UI_HOST_IDS };
   g.WTE = g.WTE || {};
   Object.assign(g.WTE, api);
 
