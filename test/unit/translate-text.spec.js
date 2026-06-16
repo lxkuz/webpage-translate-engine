@@ -27,7 +27,7 @@ function loadTranslateTextStack(extra = {}) {
     }),
   };
 
-  for (const rel of ['src/config.js', 'presets/wptranlate.js', 'src/lang-tag.js', 'src/lang-detect.js', 'src/translate-text.js']) {
+  for (const rel of ['src/config.js', 'presets/wptranlate.js', 'src/lang-tag.js', 'src/lang-detect.js', 'src/translator-adapters.js', 'src/translate-text.js']) {
     vm.runInNewContext(fs.readFileSync(path.join(ROOT, rel), 'utf8'), sandbox, { filename: rel });
   }
   return sandbox;

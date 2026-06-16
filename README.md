@@ -1,14 +1,15 @@
 # webpage-translate-engine
 
-Reusable translation engine for Chrome extensions using the **Chrome Built-in Translator** and **LanguageDetector** APIs.
+Reusable translation engine for Chrome extensions using the **Chrome Built-in Translator** API, with **LibreTranslate HTTP fallback** when Chrome AI is unavailable.
 
-Runs in the **page context** (via `chrome.scripting.executeScript`) — walks the DOM, batches text to `Translator.translate()`, caches results in `localStorage`, and supports revert.
+Runs in the **page context** (via `chrome.scripting.executeScript`) — walks the DOM, batches text through a unified `translator.translate()` adapter, caches results in `localStorage`, and supports revert.
 
 ## Requirements
 
-- Chrome 138+ desktop
-- `Translator` and `LanguageDetector` available in the injected world
-- User gesture for first model download (extension responsibility)
+- Chrome 138+ desktop (for primary Chrome Translator path)
+- `Translator` and `LanguageDetector` when available in the injected world
+- User gesture for first Chrome model download (extension responsibility)
+- Optional: `remoteTranslate.baseUrl` — open LibreTranslate API (e.g. `https://trnslt.breget.tech/lt`)
 
 ## Quick start (Chrome extension)
 
@@ -18,10 +19,12 @@ Runs in the **page context** (via `chrome.scripting.executeScript`) — walks th
 
 ```
 src/config.js
-presets/your-preset.js   ← set WTE_CONFIG (prefix, storage keys, events)
+presets/your-preset.js   ← set WTE_CONFIG (prefix, storage keys, events, remoteTranslate)
 src/hash.js
 src/lang-tag.js
 src/lang-detect.js
+src/translator-adapters.js
+src/translate-text.js
 src/cache.js
 src/dom-i18n-restore.js
 src/translate-document.js
@@ -60,6 +63,25 @@ Set on `self.WTE_CONFIG` in a preset file (see `presets/wptranlate.js`):
 | `uiHostSuffixes` | Shadow host id suffixes skipped during DOM walk |
 | `toasts.quickToggle` | `{ css, durationMs }` — «clearing cache, translating again…» (see `revertAndClearCaches`) |
 | `toasts.error` | `{ css, durationMs }` — translation errors in `translateDocument` |
+| `remoteTranslate.enabled` | Enable LibreTranslate fallback when Chrome `Translator` missing or unavailable |
+| `remoteTranslate.baseUrl` | API root, e.g. `https://trnslt.breget.tech/lt` |
+| `remoteTranslate.request` | Optional custom `(path, body, cfg) => Promise<object>` (background proxy) |
+
+### Translator backends
+
+`src/translator-adapters.js` exposes `WTE.wteAcquireTranslator(source, target, options)`:
+
+1. **Chrome** — `Translator.availability` + `Translator.create` (unchanged behaviour).
+2. **Remote** — `POST {baseUrl}/translate` when Chrome path fails or API is absent.
+
+Page logic (`translate-document.js`, batching, cache) stays the same; only the `translator.translate()` implementation changes.
+
+```javascript
+remoteTranslate: {
+  enabled: true,
+  baseUrl: 'https://trnslt.breget.tech/lt',
+},
+```
 
 Toast CSS is **full** `element.style.cssText` strings. Defaults are neutral slate/dark; each preset sets its own branding (see `presets/wptranlate.js`).
 

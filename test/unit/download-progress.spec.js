@@ -51,7 +51,7 @@ test('wteCreateTranslator emits 0% and 100% when model is downloadable', async (
   };
   sandbox.self = sandbox;
   sandbox.Translator = sandbox.Translator;
-  for (const rel of ['src/config.js', 'presets/tsmpl.js', 'src/lang-tag.js', 'src/lang-detect.js', 'src/translate-text.js']) {
+  for (const rel of ['src/config.js', 'presets/tsmpl.js', 'src/lang-tag.js', 'src/lang-detect.js', 'src/translator-adapters.js', 'src/translate-text.js']) {
     vm.runInNewContext(fs.readFileSync(path.join(ROOT, rel), 'utf8'), sandbox, { filename: rel });
   }
 

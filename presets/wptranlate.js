@@ -27,6 +27,10 @@
       'selection-popup',
     ],
     logTag: '[Translate Webpage]',
+    remoteTranslate: {
+      enabled: true,
+      baseUrl: 'https://trnslt.breget.tech/lt',
+    },
     toasts: {
       quickToggle: {
         css:

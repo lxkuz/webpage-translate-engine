@@ -30,6 +30,7 @@ function loadEngineStack(presetFile) {
     'src/hash.js',
     'src/lang-tag.js',
     'src/lang-detect.js',
+    'src/translator-adapters.js',
     'src/translate-text.js',
     'src/cache.js',
     'src/dom-i18n-restore.js',

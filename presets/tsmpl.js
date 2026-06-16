@@ -20,6 +20,10 @@
       'quick-toggle-toast',
     ],
     logTag: '[Translate Web Page]',
+    remoteTranslate: {
+      enabled: true,
+      baseUrl: 'https://trnslt.breget.tech/lt',
+    },
     toasts: {
       quickToggle: {
         css:

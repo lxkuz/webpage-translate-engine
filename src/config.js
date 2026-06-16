@@ -144,9 +144,14 @@
       langDetection: overrides?.langDetection ?? base.langDetection ?? 'languageDetector',
       /** When langDetection=topFrameHtml and declared source equals target, use latin/cyrillic heuristic */
       langHeuristicLatinCyrillic: overrides?.langHeuristicLatinCyrillic ?? base.langHeuristicLatinCyrillic ?? false,
-      /** Verbose console logging when true (preset or runtime override) */
+      /** Verbose console logging for translation pipeline debugging */
       debug: overrides?.debug ?? base.debug ?? false,
       logTag: overrides?.logTag ?? base.logTag ?? '[WebpageTranslateEngine]',
+      remoteTranslate: {
+        enabled: overrides?.remoteTranslate?.enabled ?? base.remoteTranslate?.enabled ?? false,
+        baseUrl: overrides?.remoteTranslate?.baseUrl ?? base.remoteTranslate?.baseUrl ?? null,
+        request: overrides?.remoteTranslate?.request ?? base.remoteTranslate?.request ?? null,
+      },
       toasts: {
         quickToggle: wteMergeToastSpec('quickToggle', overrides, base),
         error: wteMergeToastSpec('error', overrides, base),

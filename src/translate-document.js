@@ -61,26 +61,44 @@ async function wteTranslateDocument(targetLanguage, sourceLanguageOverride, mess
   });
   const { getCache, saveCache } = (typeof self !== 'undefined' && (self.__wteCache || self.__wptranlateCache || self.__tsmplCache)) || { getCache: () => ({ entries: {}, urlOrder: [], revEntries: {} }), saveCache: () => {} };
 
+  dbg('translate-document:start', {
+    targetLanguage,
+    sourceLanguageOverride,
+    hostname: typeof location !== 'undefined' ? location.hostname : '',
+    htmlLang: typeof document !== 'undefined' ? document.documentElement?.lang : '',
+  });
+
   const isHttp = typeof location !== 'undefined' && location.protocol === 'http:' &&
     !/^localhost$|^127\.0\.0\.1$/.test(location.hostname);
   if (isHttp) {
+    dbg('translate-document:abort', { reason: 'https-only' });
     injToastErr(chrome.i18n.getMessage('uiErrHttpsOnly'));
     return;
   }
-  if (!('Translator' in self)) {
+  const remoteEnabled = g.WTE?.wteRemoteEnabled?.(cfg);
+  const hasChrome = g.WTE?.wteHasChromeTranslator?.() ?? ('Translator' in self);
+  if (!hasChrome && !remoteEnabled) {
+    dbg('translate-document:abort', { reason: 'no-backend', hasChrome, remoteEnabled });
     injToastErr(chrome.i18n.getMessage('uiErrNoBuiltInTranslator'));
     return;
   }
 
   const hostname = typeof location !== 'undefined' ? location.hostname : '';
   const domains = await wteGetEnabledDomains();
-  if (!hostname || !domains.includes(hostname)) return;
+  if (!hostname || !domains.includes(hostname)) {
+    dbg('translate-document:abort', { reason: 'domain-not-enabled', hostname, domains });
+    return;
+  }
 
   if (self[nm.stateTranslating]) {
+    dbg('translate-document:defer', { reason: 'already-translating' });
     self[nm.stateTranslatePending] = true;
     return;
   }
-  if (!document.body) return;
+  if (!document.body) {
+    dbg('translate-document:abort', { reason: 'no-body' });
+    return;
+  }
   self[nm.stateTranslating] = true;
   self[nm.stateLastArgs] = [targetLanguage, sourceLanguageOverride, messageTabId];
   let badgeLit = false;
@@ -96,6 +114,7 @@ async function wteTranslateDocument(targetLanguage, sourceLanguageOverride, mess
 
   try {
     const sample = document.body?.innerText?.slice(0, detectSampleLen) || '';
+    dbg('translate-document:sample', { sampleLen: sample.length });
 
     let sourceLanguage;
     let translator;
@@ -115,16 +134,26 @@ async function wteTranslateDocument(targetLanguage, sourceLanguageOverride, mess
       );
       if (trResult.skipped) return injSilentSkip(trResult.reason);
       if (!trResult.ok) {
+        dbg('translate-document:translator-failed', { reason: trResult.reason, error: trResult.error });
         if (trResult.reason === 'unavailable') {
           injToastErr(chrome.i18n.getMessage('uiErrModelUnavailable'));
+        } else if (trResult.reason === 'no-backend' || trResult.reason === 'no-translator') {
+          injToastErr(chrome.i18n.getMessage('uiErrNoBuiltInTranslator'));
         } else if (trResult.reason === 'create-error') {
           injToastErr(chrome.i18n.getMessage('uiErrTranslatorCreate', [trResult.error || 'unknown']));
+        } else if (trResult.reason === 'remote-disabled') {
+          injToastErr(chrome.i18n.getMessage('uiErrNoBuiltInTranslator'));
         }
         return;
       }
       sourceLanguage = langResult.sourceLanguage;
       targetLanguage = langResult.targetLanguage;
       translator = trResult.translator;
+      dbg('translate-document:translator-ready', {
+        sourceLanguage,
+        targetLanguage,
+        backend: trResult.backend || translator?.backend,
+      });
     } else {
       /* Fallback when translate-text.js is not loaded (legacy inject order). */
       const injNormalizeLang = (typeof self !== 'undefined' && (self.wteNormalizeLangTag || self.wptranlateNormalizeLangTag)) || ((tag) => {
@@ -173,7 +202,7 @@ async function wteTranslateDocument(targetLanguage, sourceLanguageOverride, mess
       try {
         avail = await Translator.availability({ sourceLanguage, targetLanguage });
       } catch (e) {
-        if (/invalid language tag/i.test(e?.message || '')) return injSilentSkip('invalid-lang');
+        if (/invalid language tag/i.test(e?.message || '')) return injSilentSkip();
         throw e;
       }
       if (avail === 'unavailable') {
@@ -335,7 +364,11 @@ async function wteTranslateDocument(targetLanguage, sourceLanguageOverride, mess
     }
     const attrJobs = [];
     injGatherAttrJobs(document.body, attrJobs);
-    if (toProcess.length === 0 && attrJobs.length === 0) return { ok: false, reason: 'empty' };
+    if (toProcess.length === 0 && attrJobs.length === 0) {
+      dbg('translate-document:empty', { toProcess: 0, attrJobs: attrJobs.length });
+      return { ok: false, reason: 'empty' };
+    }
+    dbg('translate-document:nodes', { textNodes: toProcess.length, attrJobs: attrJobs.length });
 
     const VISIBLE_FIRST_BATCH = batchCfg.visibleFirst ?? 20;   // 20 самых маленьких видимых — первый батч
     const VISIBLE_BATCH = batchCfg.visible ?? 20;         // остальные видимые — батчами по 20
@@ -454,6 +487,12 @@ async function wteTranslateDocument(targetLanguage, sourceLanguageOverride, mess
         }
         if (uncachedTexts.length > 0) {
           const joined = uncachedTexts.join(BATCH_SEP);
+          dbg('translate-document:batch', {
+            uncachedCount: uncachedTexts.length,
+            joinedLen: joined.length,
+            isFirstBatch,
+            backend: translator?.backend,
+          });
           try {
             const translatedBatch = await translator.translate(joined);
             const domainsAfter = await wteGetEnabledDomains();
@@ -462,11 +501,13 @@ async function wteTranslateDocument(targetLanguage, sourceLanguageOverride, mess
               break;
             }
             translations = translatedBatch.split(BATCH_SEP);
+            dbg('translate-document:batch-ok', { parts: translations.length });
             if (translations.length !== uncachedTexts.length) {
               translations = [];
               for (const text of uncachedTexts) translations.push(await translator.translate(text));
             }
-          } catch (_) {
+          } catch (batchErr) {
+            dbg('translate-document:batch-error', { error: String(batchErr?.message || batchErr) });
             for (const text of uncachedTexts) translations.push(await translator.translate(text));
           }
         }
@@ -706,8 +747,12 @@ async function wteTranslateDocument(targetLanguage, sourceLanguageOverride, mess
     }
     return { ok: Boolean(badgeLit) };
   } catch (e) {
-    if (/Permission Policy|sandbox|access denied/i.test(e?.message || '')) return;
+    if (/Permission Policy|sandbox|access denied/i.test(e?.message || '')) {
+      dbg('translate-document:abort', { reason: 'sandbox', error: String(e?.message || e) });
+      return;
+    }
     if (/invalid language tag/i.test(e?.message || '')) return injSilentSkip('invalid-lang');
+    dbg('translate-document:error', { error: String(e?.message || e) });
     injToastErr(chrome.i18n.getMessage('uiErrTranslationFailed', [String(e?.message || e)]));
   } finally {
     self[nm.stateTranslating] = false;

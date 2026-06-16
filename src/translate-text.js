@@ -1,6 +1,6 @@
 /**
- * Single-string translation via Chrome Built-in Translator API.
- * Requires: config, lang-tag, lang-detect (load before this script).
+ * Single-string translation via translator adapters (Chrome API → remote fallback).
+ * Requires: config, lang-tag, lang-detect, translator-adapters (load before this script).
  *
  * Public API (page context):
  *   WTE.wteResolveLanguages(target, sourceOverride, sample, options?)
@@ -32,6 +32,12 @@
     return location.protocol === 'http:' && !/^localhost$|^127\.0\.0\.1$/i.test(location.hostname || '');
   }
 
+  function wteHasAnyTranslatorBackend() {
+    if (g.WTE?.wteHasChromeTranslator?.()) return true;
+    const cfg = g.WTE?.wteMergeConfig?.() || {};
+    return Boolean(g.WTE?.wteRemoteEnabled?.(cfg));
+  }
+
   function wteLatinCyrillicCounts(text) {
     const sample = typeof text === 'string' ? text : '';
     return {
@@ -40,7 +46,7 @@
     };
   }
 
-  /** Грубая оценка языка по алфавиту, когда LanguageDetector недоступен или ненадёжен. */
+  /** Когда LanguageDetector недоступен (Brave и др.) — грубая оценка по алфавиту. */
   function wteGuessLangFromScript(sample) {
     const { cyrillic, latin } = wteLatinCyrillicCounts(sample);
     if (cyrillic >= 10 && cyrillic > latin * 1.5) return 'ru';
@@ -78,6 +84,7 @@
     if (sourceLanguageOverride && String(sourceLanguageOverride).trim()) {
       sourceLanguage = normalizeLang(sourceLanguageOverride);
       if (!sourceLanguage) return { skipped: true, reason: 'invalid-source' };
+      g.WTE?.wteDebugLog?.('resolve-lang:override', { sourceLanguage, targetLangNorm }, cfg);
     } else if (cfg.langDetection === 'topFrameHtml') {
       let declaredLang = '';
       if (typeof topFrameHtmlLang === 'string') {
@@ -104,6 +111,8 @@
         ? normalizeLang(document.documentElement?.lang)
         : null;
       const fromScript = wteGuessLangFromScript(sample);
+      // Страницы с lang="en" и русским текстом: LanguageDetector (Chrome) часто даёт en.
+      // При включённой эвристике доверяем алфавиту раньше детектора и html[lang].
       if (cfg.langHeuristicLatinCyrillic) {
         sourceLanguage = fromScript ?? detected?.lang ?? fromHtml;
       } else {
@@ -134,69 +143,27 @@
   }
 
   /**
-   * @returns {Promise<{ ok: true, translator: object, sourceLanguage: string, targetLanguage: string }|{ skipped: true, reason: string }|{ ok: false, reason: string, error?: string }>}
+   * @returns {Promise<{ ok: true, translator: object, backend?: string, sourceLanguage: string, targetLanguage: string }|{ skipped: true, reason: string }|{ ok: false, reason: string, error?: string }>}
    */
   async function wteCreateTranslator(sourceLanguage, targetLanguage, options = {}) {
-    const cfg = g.WTE?.wteMergeConfig?.() || {};
-    const ev = cfg.events || {};
-    const messageTabId = options.messageTabId;
-
-    if (!('Translator' in g)) {
-      return { ok: false, reason: 'no-translator' };
+    const acquire = g.WTE?.wteAcquireTranslator;
+    if (typeof acquire === 'function') {
+      return acquire(sourceLanguage, targetLanguage, options);
     }
-
-    let avail;
-    try {
-      avail = await Translator.availability({ sourceLanguage, targetLanguage });
-    } catch (e) {
-      if (/invalid language tag/i.test(e?.message || '')) return { skipped: true, reason: 'invalid-lang' };
-      return { ok: false, reason: 'availability-error', error: String(e?.message || e) };
-    }
-
-    if (avail === 'unavailable') return { ok: false, reason: 'unavailable' };
-    const needsDownload = avail === 'downloadable' || avail === 'downloading';
-    const emitProgress = g.WTE?.wteEmitDownloadProgress;
-
-    try {
-      if (needsDownload && emitProgress) {
-        emitProgress(ev, messageTabId, 0, 100, 0);
-      }
-      const translator = await Translator.create({
-        sourceLanguage,
-        targetLanguage,
-        ...(needsDownload && emitProgress && {
-          monitor(m) {
-            m.addEventListener('downloadprogress', (e) => {
-              const total = e.total && e.total > 0 ? e.total : 1;
-              const pct = Math.min(100, Math.round((e.loaded / total) * 100));
-              emitProgress(ev, messageTabId, e.loaded, e.total, pct);
-            });
-          },
-        }),
-      });
-      if (needsDownload && emitProgress) {
-        emitProgress(ev, messageTabId, 100, 100, 100);
-      }
-      return { ok: true, translator, sourceLanguage, targetLanguage };
-    } catch (e) {
-      const msg = String(e?.message || e);
-      if (/user gesture/i.test(msg)) return { ok: false, reason: 'user-gesture' };
-      if (/Permission Policy|sandbox|access denied/i.test(msg)) return { ok: false, reason: 'sandbox' };
-      return { ok: false, reason: 'create-error', error: msg };
-    }
+    return { ok: false, reason: 'no-adapters' };
   }
 
   /**
    * Translate a single string. All selection / snippet flows should use this entry point.
    *
-   * @returns {Promise<{ ok: true, original: string, translated: string, sourceLanguage: string, targetLanguage: string }|{ skipped: true, reason: string }|{ ok: false, reason: string, error?: string }>}
+   * @returns {Promise<{ ok: true, original: string, translated: string, sourceLanguage: string, targetLanguage: string, backend?: string }|{ skipped: true, reason: string }|{ ok: false, reason: string, error?: string }>}
    */
   async function wteTranslateText(text, targetLanguage, sourceLanguageOverride, options = {}) {
     const original = (typeof text === 'string' ? text : '').trim();
     if (!original) return { skipped: true, reason: 'empty' };
 
     if (wteIsRemoteHttp()) return { ok: false, reason: 'https-only' };
-    if (!('Translator' in g)) return { ok: false, reason: 'no-translator' };
+    if (!wteHasAnyTranslatorBackend()) return { ok: false, reason: 'no-translator' };
 
     const langResult = await wteResolveLanguages(
       targetLanguage,
@@ -204,25 +171,41 @@
       original,
       { ...options, minDetectSampleLen: options.minDetectSampleLen ?? 3 },
     );
-    if (langResult.skipped) return langResult;
+    if (langResult.skipped) {
+      g.WTE?.wteDebugLog?.('translate-text:skip', { reason: langResult.reason }, g.WTE?.wteMergeConfig?.() || {});
+      return langResult;
+    }
 
     const trResult = await wteCreateTranslator(
       langResult.sourceLanguage,
       langResult.targetLanguage,
       options,
     );
-    if (trResult.skipped) return trResult;
-    if (!trResult.ok) return trResult;
+    if (trResult.skipped) {
+      g.WTE?.wteDebugLog?.('translate-text:skip', { reason: trResult.reason }, g.WTE?.wteMergeConfig?.() || {});
+      return trResult;
+    }
+    if (!trResult.ok) {
+      g.WTE?.wteDebugLog?.('translate-text:error', { reason: trResult.reason, error: trResult.error }, g.WTE?.wteMergeConfig?.() || {});
+      return trResult;
+    }
 
     try {
       const translated = await trResult.translator.translate(original);
       const out = (translated ?? '').trim();
+      g.WTE?.wteDebugLog?.('translate-text:ok', {
+        backend: trResult.backend || trResult.translator?.backend,
+        sourceLanguage: langResult.sourceLanguage,
+        targetLanguage: langResult.targetLanguage,
+        chars: original.length,
+      }, g.WTE?.wteMergeConfig?.() || {});
       return {
         ok: true,
         original,
         translated: out || original,
         sourceLanguage: langResult.sourceLanguage,
         targetLanguage: langResult.targetLanguage,
+        backend: trResult.backend || trResult.translator?.backend,
       };
     } catch (e) {
       return { ok: false, reason: 'error', error: String(e?.message || e) };
@@ -235,6 +218,7 @@
     wteCreateTranslator,
     wteTranslateText,
     translateText: wteTranslateText,
+    wteHasAnyTranslatorBackend,
   });
 
   if (typeof module !== 'undefined' && module.exports) {
@@ -242,6 +226,7 @@
       wteResolveLanguages,
       wteCreateTranslator,
       wteTranslateText,
+      wteHasAnyTranslatorBackend,
     };
   }
 })(typeof globalThis !== 'undefined' ? globalThis : undefined);

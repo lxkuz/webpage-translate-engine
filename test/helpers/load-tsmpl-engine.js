@@ -13,6 +13,7 @@ const ENGINE_FILES = [
   'src/hash.js',
   'src/lang-tag.js',
   'src/lang-detect.js',
+  'src/translator-adapters.js',
   'src/translate-text.js',
   'src/cache.js',
   'presets/aliases.js',
