@@ -120,7 +120,7 @@
     const base = g.WTE_CONFIG || {};
     const prefix = overrides?.prefix ?? base.prefix ?? 'wte';
     const names = wteMakeNames(prefix, overrides?.uiHostSuffixes ?? base.uiHostSuffixes);
-    return {
+    const merged = {
       prefix,
       names,
       enabledDomainsStorageKey: overrides?.enabledDomainsStorageKey ?? base.enabledDomainsStorageKey ?? null,
@@ -144,15 +144,27 @@
       langDetection: overrides?.langDetection ?? base.langDetection ?? 'languageDetector',
       /** When langDetection=topFrameHtml and declared source equals target, use latin/cyrillic heuristic */
       langHeuristicLatinCyrillic: overrides?.langHeuristicLatinCyrillic ?? base.langHeuristicLatinCyrillic ?? false,
+      /** Verbose console logging when true (preset or runtime override) */
+      debug: overrides?.debug ?? base.debug ?? false,
       logTag: overrides?.logTag ?? base.logTag ?? '[WebpageTranslateEngine]',
       toasts: {
         quickToggle: wteMergeToastSpec('quickToggle', overrides, base),
         error: wteMergeToastSpec('error', overrides, base),
       },
     };
+    return merged;
   }
 
-  const api = { wteMakeNames, wteMergeConfig, wteMountToast, wteEmitDownloadProgress, WTE_DEFAULT_TOASTS, DEFAULT_UI_HOST_IDS };
+  function wteDebugLog(stage, data, cfg) {
+    const c = cfg || g.WTE?.wteMergeConfig?.() || {};
+    if (!c.debug) return;
+    const tag = c.logTag || '[WebpageTranslateEngine]';
+    const frame = typeof window !== 'undefined' && window !== window.top ? 'iframe' : 'top';
+    if (data !== undefined) console.log(tag, stage, { frame, ...data });
+    else console.log(tag, stage, { frame });
+  }
+
+  const api = { wteMakeNames, wteMergeConfig, wteMountToast, wteEmitDownloadProgress, wteDebugLog, WTE_DEFAULT_TOASTS, DEFAULT_UI_HOST_IDS };
   g.WTE = g.WTE || {};
   Object.assign(g.WTE, api);
 

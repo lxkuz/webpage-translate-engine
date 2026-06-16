@@ -32,6 +32,32 @@
     return location.protocol === 'http:' && !/^localhost$|^127\.0\.0\.1$/i.test(location.hostname || '');
   }
 
+  function wteLatinCyrillicCounts(text) {
+    const sample = typeof text === 'string' ? text : '';
+    return {
+      cyrillic: (sample.match(/[\u0400-\u04FF]/g) || []).length,
+      latin: (sample.match(/[a-zA-Z]/g) || []).length,
+    };
+  }
+
+  /** Грубая оценка языка по алфавиту, когда LanguageDetector недоступен или ненадёжен. */
+  function wteGuessLangFromScript(sample) {
+    const { cyrillic, latin } = wteLatinCyrillicCounts(sample);
+    if (cyrillic >= 10 && cyrillic > latin * 1.5) return 'ru';
+    if (latin >= 10 && latin > cyrillic * 1.5) return 'en';
+    return null;
+  }
+
+  function wteApplyLatinCyrillicHeuristic(sourceLanguage, targetLangNorm, sample, cfg) {
+    if (!cfg.langHeuristicLatinCyrillic || sourceLanguage !== targetLangNorm) {
+      return sourceLanguage;
+    }
+    const { cyrillic, latin } = wteLatinCyrillicCounts(sample);
+    if (latin > cyrillic * 1.5) return 'en';
+    if (cyrillic > latin * 1.5) return 'ru';
+    return sourceLanguage;
+  }
+
   /**
    * @returns {Promise<{ sourceLanguage: string, targetLanguage: string }|{ skipped: true, reason: string }>}
    */
@@ -66,10 +92,8 @@
       sourceLanguage = normalizeLang(declaredLang || 'en');
       if (!sourceLanguage) return { skipped: true, reason: 'no-source' };
       if (cfg.langHeuristicLatinCyrillic && sourceLanguage === targetLangNorm) {
-        const cyrillic = (sample.match(/[\u0400-\u04FF]/g) || []).length;
-        const latin = (sample.match(/[a-zA-Z]/g) || []).length;
-        if (latin > cyrillic * 1.5) sourceLanguage = 'en';
-        else return { skipped: true, reason: 'same-lang' };
+        sourceLanguage = wteApplyLatinCyrillicHeuristic(sourceLanguage, targetLangNorm, sample, cfg);
+        if (sourceLanguage === targetLangNorm) return { skipped: true, reason: 'same-lang' };
       }
     } else {
       const detected = await detectLang(sample || sampleText, {
@@ -79,12 +103,33 @@
       const fromHtml = typeof document !== 'undefined'
         ? normalizeLang(document.documentElement?.lang)
         : null;
-      sourceLanguage = detected?.lang ?? fromHtml;
+      const fromScript = wteGuessLangFromScript(sample);
+      if (cfg.langHeuristicLatinCyrillic) {
+        sourceLanguage = fromScript ?? detected?.lang ?? fromHtml;
+      } else {
+        sourceLanguage = detected?.lang ?? fromScript ?? fromHtml;
+      }
       if (!sourceLanguage) return { skipped: true, reason: 'no-source' };
+      sourceLanguage = wteApplyLatinCyrillicHeuristic(sourceLanguage, targetLangNorm, sample, cfg);
+      g.WTE?.wteDebugLog?.('resolve-lang:detector', {
+        detected: detected?.lang ?? null,
+        fromScript,
+        fromHtml,
+        heuristic: cfg.langHeuristicLatinCyrillic,
+        cyrillic: wteLatinCyrillicCounts(sample).cyrillic,
+        latin: wteLatinCyrillicCounts(sample).latin,
+        sampleLen: sample.length,
+        sourceLanguage,
+        targetLangNorm,
+      }, cfg);
     }
 
-    if (sourceLanguage === targetLangNorm) return { skipped: true, reason: 'same-lang' };
+    if (sourceLanguage === targetLangNorm) {
+      g.WTE?.wteDebugLog?.('resolve-lang:skip', { reason: 'same-lang', sourceLanguage, targetLangNorm }, cfg);
+      return { skipped: true, reason: 'same-lang' };
+    }
 
+    g.WTE?.wteDebugLog?.('resolve-lang:ok', { sourceLanguage, targetLangNorm }, cfg);
     return { sourceLanguage, targetLanguage: targetLangNorm };
   }
 

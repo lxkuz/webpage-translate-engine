@@ -33,6 +33,7 @@
 
 async function wteTranslateDocument(targetLanguage, sourceLanguageOverride, messageTabId, topFrameHtmlLang) {
   const cfg = g.WTE?.wteMergeConfig?.() || {};
+  const dbg = (stage, data) => g.WTE?.wteDebugLog?.(stage, data, cfg);
   const nm = cfg.names || g.WTE?.wteMakeNames?.('wptranlate');
   const ev = cfg.events || {};
   const domainsKey = cfg.enabledDomainsStorageKey || 'wptranlate_enabledDomains';
@@ -86,7 +87,10 @@ async function wteTranslateDocument(targetLanguage, sourceLanguageOverride, mess
 
   const translated = (self[nm.stateTranslated] = self[nm.stateTranslated] || new WeakSet());
 
-  const injSilentSkip = () => ({ skipped: true, reason: 'same-lang' });
+  const injSilentSkip = (reason) => {
+    dbg('translate-document:skip', { reason: reason || 'same-lang' });
+    return { skipped: true, reason: reason || 'same-lang' };
+  };
   const wteResolveLanguages = g.WTE?.wteResolveLanguages;
   const wteCreateTranslator = g.WTE?.wteCreateTranslator;
 
@@ -102,14 +106,14 @@ async function wteTranslateDocument(targetLanguage, sourceLanguageOverride, mess
         sample,
         { topFrameHtmlLang, detectSampleLen },
       );
-      if (langResult.skipped) return injSilentSkip();
+      if (langResult.skipped) return injSilentSkip(langResult.reason);
 
       const trResult = await wteCreateTranslator(
         langResult.sourceLanguage,
         langResult.targetLanguage,
         { messageTabId },
       );
-      if (trResult.skipped) return injSilentSkip();
+      if (trResult.skipped) return injSilentSkip(trResult.reason);
       if (!trResult.ok) {
         if (trResult.reason === 'unavailable') {
           injToastErr(chrome.i18n.getMessage('uiErrModelUnavailable'));
@@ -169,7 +173,7 @@ async function wteTranslateDocument(targetLanguage, sourceLanguageOverride, mess
       try {
         avail = await Translator.availability({ sourceLanguage, targetLanguage });
       } catch (e) {
-        if (/invalid language tag/i.test(e?.message || '')) return injSilentSkip();
+        if (/invalid language tag/i.test(e?.message || '')) return injSilentSkip('invalid-lang');
         throw e;
       }
       if (avail === 'unavailable') {
@@ -703,7 +707,7 @@ async function wteTranslateDocument(targetLanguage, sourceLanguageOverride, mess
     return { ok: Boolean(badgeLit) };
   } catch (e) {
     if (/Permission Policy|sandbox|access denied/i.test(e?.message || '')) return;
-    if (/invalid language tag/i.test(e?.message || '')) return injSilentSkip();
+    if (/invalid language tag/i.test(e?.message || '')) return injSilentSkip('invalid-lang');
     injToastErr(chrome.i18n.getMessage('uiErrTranslationFailed', [String(e?.message || e)]));
   } finally {
     self[nm.stateTranslating] = false;
