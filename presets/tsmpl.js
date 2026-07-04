@@ -18,6 +18,7 @@
       'page-panel',
       'error-toast',
       'quick-toggle-toast',
+      'selection-popup',
     ],
     logTag: '[Translate Web Page]',
     toasts: {
