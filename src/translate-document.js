@@ -337,10 +337,62 @@ async function wteTranslateDocument(targetLanguage, sourceLanguageOverride, mess
     const VISIBLE_BATCH = batchCfg.visible ?? 20;         // остальные видимые — батчами по 20
     const OFFSCREEN_BATCH = batchCfg.offscreen ?? 100;     // невидимые (за экраном) — батчами по 100
     const BATCH_SEP = batchCfg.sep ?? '\u2063';       // U+2063 Invisible Separator — не используется в естественных языках
+    const FIRST_BATCH_PRIORITY = batchCfg.firstBatchPriority || 'shortest';
+    const PAGE_CONCURRENCY = Math.max(1, batchCfg.pageConcurrency || 1);
+    const useBackendEngine = !!(
+      (typeof self !== 'undefined' && (self.__tsmplBackendActive || self.__tsmplTranslatorIsPolyfill
+        || self.__trnsltBackendActive || self.__trnsltTranslatorIsPolyfill))
+    );
 
     function injElementVisible(el) {
       const r = el.getBoundingClientRect();
       return r.top < window.innerHeight && r.bottom > 0 && r.left < window.innerWidth && r.right > 0;
+    }
+
+    /** 0 = heading, 1 = nav/menu, 2 = other — for first-batch UI priority (backend / no-builtin). */
+    function injUiPriorityRank(spanOrEl) {
+      const el = spanOrEl?.closest
+        ? spanOrEl.closest(
+          'h1,h2,h3,h4,h5,h6,nav,header,[role="navigation"],[role="menubar"],[role="menu"],[role="menuitem"],[role="treeitem"]',
+        )
+        : null;
+      if (!el) return 2;
+      if (/^H[1-6]$/i.test(el.tagName)) return 0;
+      return 1;
+    }
+
+    function injSortVisibleForFirstBatch(wrappedVisible) {
+      if (FIRST_BATCH_PRIORITY !== 'headings-nav' || !useBackendEngine) {
+        return [...wrappedVisible].sort((a, b) => {
+          const la = (a.span?.textContent ?? a.orig ?? '').length;
+          const lb = (b.span?.textContent ?? b.orig ?? '').length;
+          return la - lb;
+        });
+      }
+      const withRank = wrappedVisible.map((w) => ({
+        w,
+        rank: injUiPriorityRank(w.span || w.el),
+        len: (w.span?.textContent ?? w.orig ?? '').trim().length,
+      }));
+      withRank.sort((a, b) => (a.rank - b.rank) || (a.len - b.len));
+      return withRank.map((x) => x.w);
+    }
+
+    function injBuildFirstAndRest(wrappedVisible) {
+      const sorted = injSortVisibleForFirstBatch(wrappedVisible);
+      if (FIRST_BATCH_PRIORITY === 'headings-nav' && useBackendEngine) {
+        const priority = sorted.filter((w) => injUiPriorityRank(w.span || w.el) < 2);
+        const others = sorted.filter((w) => injUiPriorityRank(w.span || w.el) >= 2);
+        // All visible headings/menus first; pad with shortest others up to VISIBLE_FIRST.
+        const pad = Math.max(0, VISIBLE_FIRST_BATCH - priority.length);
+        const first = [...priority, ...others.slice(0, pad)];
+        const rest = others.slice(pad);
+        return { firstBatch: first, restVisible: rest };
+      }
+      return {
+        firstBatch: sorted.slice(0, VISIBLE_FIRST_BATCH),
+        restVisible: sorted.slice(VISIBLE_FIRST_BATCH),
+      };
     }
 
     if (!document.getElementById(nm.waveStylesId)) {
@@ -389,9 +441,7 @@ async function wteTranslateDocument(targetLanguage, sourceLanguageOverride, mess
 
     const visible = wrapped.filter((w) => injElementVisible(w.span));
     const offScreen = wrapped.filter((w) => !injElementVisible(w.span));
-    const visibleSorted = [...visible].sort((a, b) => a.span.textContent.length - b.span.textContent.length);
-    const firstBatch = visibleSorted.slice(0, VISIBLE_FIRST_BATCH);
-    const restVisible = visibleSorted.slice(VISIBLE_FIRST_BATCH);
+    const { firstBatch, restVisible } = injBuildFirstAndRest(visible);
     function injSliceTextBatches(arr, n) { const out = []; for (let i = 0; i < arr.length; i += n) out.push(arr.slice(i, i + n)); return out; }
     const allBatches = wrapped.length
       ? [firstBatch, ...injSliceTextBatches(restVisible, VISIBLE_BATCH), ...injSliceTextBatches(offScreen, OFFSCREEN_BATCH)]
@@ -404,18 +454,18 @@ async function wteTranslateDocument(targetLanguage, sourceLanguageOverride, mess
     let titleTranslatedThisRun = false;
     let aborted = false;
     let translationStartedSent = false;
-    for (const batch of allBatches) {
-      if (batch.length === 0) continue;
+
+    async function injProcessTextBatch(batch, { isFirstBatch }) {
+      if (!batch.length) return;
       const domainsNow = await wteGetEnabledDomains();
       if (!domainsNow.includes(hostname)) {
         aborted = true;
-        break;
+        return;
       }
       const results = [];
       const uncachedIdx = [];
       const uncachedTexts = [];
 
-      const isFirstBatch = batch === firstBatch;
       let cacheDirty = false;
       for (let i = 0; i < batch.length; i++) {
         const { span } = batch[i];
@@ -455,7 +505,7 @@ async function wteTranslateDocument(targetLanguage, sourceLanguageOverride, mess
             const domainsAfter = await wteGetEnabledDomains();
             if (!domainsAfter.includes(hostname)) {
               aborted = true;
-              break;
+              return;
             }
             translations = translatedBatch.split(BATCH_SEP);
             if (translations.length !== uncachedTexts.length) {
@@ -512,6 +562,31 @@ async function wteTranslateDocument(targetLanguage, sourceLanguageOverride, mess
       await new Promise((r) => setTimeout(r, 0));
     }
 
+    const nonEmptyBatches = allBatches.filter((b) => b.length > 0);
+    if (nonEmptyBatches.length) {
+      // Backend: all page-batches in parallel (headings/menus still scheduled first in the queue).
+      // Builtin: sequential (Chrome Translator prefers fewer concurrent creates/calls).
+      const parallel = useBackendEngine && PAGE_CONCURRENCY > 1;
+      if (!parallel) {
+        for (const batch of nonEmptyBatches) {
+          if (aborted) break;
+          await injProcessTextBatch(batch, { isFirstBatch: batch === firstBatch });
+        }
+      } else {
+        let next = 0;
+        const workers = Math.min(PAGE_CONCURRENCY, nonEmptyBatches.length);
+        await Promise.all(Array.from({ length: workers }, async () => {
+          while (true) {
+            if (aborted) return;
+            const j = next++;
+            if (j >= nonEmptyBatches.length) return;
+            const batch = nonEmptyBatches[j];
+            await injProcessTextBatch(batch, { isFirstBatch: batch === firstBatch });
+          }
+        }));
+      }
+    }
+
     if (aborted) {
       injRevertWaveWraps();
     } else {
@@ -541,9 +616,11 @@ async function wteTranslateDocument(targetLanguage, sourceLanguageOverride, mess
         }
         const visA = attrJobs.filter((j) => injElementVisible(j.el));
         const offA = attrJobs.filter((j) => !injElementVisible(j.el));
-        const visSortedA = [...visA].sort((a, b) => a.orig.trim().length - b.orig.trim().length);
-        const firstAttrBatch = visSortedA.slice(0, VISIBLE_FIRST_BATCH);
-        const restAttrVis = visSortedA.slice(VISIBLE_FIRST_BATCH);
+        const { firstBatch: firstAttrWrapped, restVisible: restAttrWrapped } = injBuildFirstAndRest(
+          visA.map((j) => ({ ...j, span: j.el })),
+        );
+        const firstAttrBatch = firstAttrWrapped.map((w) => ({ el: w.el, attr: w.attr, orig: w.orig }));
+        const restAttrVis = restAttrWrapped.map((w) => ({ el: w.el, attr: w.attr, orig: w.orig }));
         function injSliceAttrBatches(arr, n) {
           const out = [];
           for (let i = 0; i < arr.length; i += n) out.push(arr.slice(i, i + n));

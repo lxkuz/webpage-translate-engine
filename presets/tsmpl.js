@@ -3,6 +3,8 @@
  * Load after config.js, before hash.js / cache.js.
  */
 (function () {
+  const eng = self.__tsmplConstants?.ENGINE || {};
+  const batch = self.__tsmplConstants?.BATCH || {};
   self.WTE_CONFIG = {
     prefix: 'tsmpl',
     enabledDomainsStorageKey: 'tsmpl_enabledDomains',
@@ -21,6 +23,14 @@
       'selection-popup',
     ],
     logTag: '[Translate Web Page]',
+    batch: {
+      visibleFirst: batch.VISIBLE_FIRST ?? 20,
+      visible: batch.VISIBLE ?? 20,
+      offscreen: batch.OFFSCREEN ?? 100,
+      /** Backend/no-builtin: headings + nav/menu first, then shortest fill. */
+      firstBatchPriority: 'headings-nav',
+      pageConcurrency: eng.BACKEND_PAGE_BATCH_CONCURRENCY ?? 16,
+    },
     toasts: {
       quickToggle: {
         css:

@@ -33,19 +33,39 @@ function loadTsmplEngine(opts = {}) {
     lang: opts.lang ?? 'en',
   });
 
-  const storage = { tsmpl_enabledDomains: ['example.com'] };
-  const localStorageData = {};
+  const hostname = opts.hostname ?? 'example.com';
+  const protocol = opts.protocol ?? 'https:';
+  const storage = {
+    tsmpl_enabledDomains: opts.domains !== undefined ? opts.domains : [hostname],
+  };
+  const localStorageData = Object.create(null);
+  const localStorage = {
+    getItem: (k) => (Object.prototype.hasOwnProperty.call(localStorageData, k) ? localStorageData[k] : null),
+    setItem: (k, v) => {
+      localStorageData[k] = String(v);
+      localStorage[k] = String(v);
+    },
+    removeItem: (k) => {
+      delete localStorageData[k];
+      delete localStorage[k];
+    },
+    clear: () => {
+      for (const k of Object.keys(localStorageData)) {
+        delete localStorageData[k];
+        delete localStorage[k];
+      }
+    },
+    key: (i) => Object.keys(localStorageData)[i] ?? null,
+    get length() { return Object.keys(localStorageData).length; },
+  };
 
   const sandbox = {
     self: {},
     window: {},
     globalThis: {},
     document,
-    localStorage: {
-      getItem: (k) => localStorageData[k] ?? null,
-      setItem: (k, v) => { localStorageData[k] = v; },
-    },
-    location: { hostname: 'example.com', protocol: 'https:', href: 'https://example.com/' },
+    localStorage,
+    location: { hostname, protocol, href: `${protocol}//${hostname}/` },
     NodeFilter: { SHOW_TEXT: 4 },
     ShadowRoot: function ShadowRoot() {},
     queueMicrotask: (fn) => fn(),

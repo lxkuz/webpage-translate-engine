@@ -88,6 +88,38 @@
     return { sourceLanguage, targetLanguage: targetLangNorm };
   }
 
+  async function waitForHubPacksReady(Translator, createApi, src, tgt, emitProgress, ev, messageTabId) {
+    const pollMs = (typeof self !== 'undefined' && self.__tsmplConstants?.TIMEOUT_MS?.PREFETCH_POLL_INTERVAL) || 400;
+    const maxMs = (typeof self !== 'undefined' && self.__tsmplConstants?.TIMEOUT_MS?.PREFETCH_DOWNLOAD_RACE) || 600000;
+    const started = Date.now();
+    let lastPlan = await createApi.resolveAvailabilityWithPivot(Translator, src, tgt);
+    if (!createApi.needsDownloadAvailability(lastPlan.avail)) return lastPlan;
+    if (emitProgress) emitProgress(ev, messageTabId, 0, 100, 0);
+    while (Date.now() - started < maxMs) {
+      await new Promise((r) => setTimeout(r, pollMs));
+      lastPlan = await createApi.resolveAvailabilityWithPivot(Translator, src, tgt);
+      if (lastPlan.mode === 'unavailable') return lastPlan;
+      if (!createApi.needsDownloadAvailability(lastPlan.avail)) return lastPlan;
+    }
+    return lastPlan;
+  }
+
+  function attachCreateMonitor(emitProgress, ev, messageTabId, stream) {
+    if (!emitProgress) return {};
+    return {
+      monitor: (m) => {
+        m.addEventListener('downloadprogress', (e) => {
+          const pctFn = (typeof self !== 'undefined' && self.__tsmplConstants?.downloadProgressPercent);
+          const total = e.total && e.total > 0 ? e.total : 1;
+          const pct = pctFn
+            ? pctFn(e.loaded, e.total)
+            : Math.min(100, Math.round((e.loaded / total) * 100));
+          emitProgress(ev, messageTabId, e.loaded, e.total, pct, stream);
+        });
+      },
+    };
+  }
+
   /**
    * @returns {Promise<{ ok: true, translator: object, sourceLanguage: string, targetLanguage: string }|{ skipped: true, reason: string }|{ ok: false, reason: string, error?: string }>}
    */
@@ -95,14 +127,65 @@
     const cfg = g.WTE?.wteMergeConfig?.() || {};
     const ev = cfg.events || {};
     const messageTabId = options.messageTabId;
+    const emitProgress = g.WTE?.wteEmitDownloadProgress;
+    const createApi = g.__tsmplTranslateCreate;
 
     if (!('Translator' in g)) {
       return { ok: false, reason: 'no-translator' };
     }
 
+    const norm = (typeof self !== 'undefined' && self.__tsmplConstants?.normalizeTranslatorLang)
+      || ((tag) => (typeof tag === 'string' ? tag.trim().split(/[-_]/)[0].toLowerCase() : null));
+    const src = norm(sourceLanguage) || sourceLanguage;
+    const tgt = norm(targetLanguage) || targetLanguage;
+
+    if (createApi?.startCreateWithPivot && createApi.resolveAvailabilityWithPivot) {
+      const isMock = typeof g.__tsmplTranslatorMock !== 'undefined' && g.__tsmplTranslatorMock != null;
+      let plan;
+      try {
+        plan = await createApi.resolveAvailabilityWithPivot(Translator, src, tgt);
+        if (!isMock && createApi.needsDownloadAvailability(plan.avail)) {
+          plan = await waitForHubPacksReady(Translator, createApi, src, tgt, emitProgress, ev, messageTabId);
+        }
+      } catch (e) {
+        if (/invalid language tag/i.test(e?.message || '')) return { skipped: true, reason: 'invalid-lang' };
+        return { ok: false, reason: 'availability-error', error: String(e?.message || e) };
+      }
+      if (plan.mode === 'unavailable') return { ok: false, reason: 'unavailable' };
+      if (!isMock && createApi.needsDownloadAvailability(plan.avail)) {
+        return { ok: false, reason: 'user-gesture' };
+      }
+      try {
+        const translator = await createApi.startCreateWithPivot(Translator, src, tgt, {
+          ...attachCreateMonitor(emitProgress, ev, messageTabId, 'translator'),
+          monitorPivot: (m, stream) => {
+            if (!emitProgress) return;
+            m.addEventListener('downloadprogress', (e) => {
+              const pctFn = (typeof self !== 'undefined' && self.__tsmplConstants?.downloadProgressPercent);
+              const total = e.total && e.total > 0 ? e.total : 1;
+              const pct = pctFn
+                ? pctFn(e.loaded, e.total)
+                : Math.min(100, Math.round((e.loaded / total) * 100));
+              emitProgress(ev, messageTabId, e.loaded, e.total, pct, stream);
+            });
+          },
+        });
+        if (emitProgress) emitProgress(ev, messageTabId, 100, 100, 100);
+        return { ok: true, translator, sourceLanguage: src, targetLanguage: tgt };
+      } catch (e) {
+        const msg = String(e?.message || e);
+        if (/user gesture|NotAllowedError|leg-download-pending/i.test(msg)) {
+          return { ok: false, reason: 'user-gesture' };
+        }
+        if (/Permission Policy|sandbox|access denied/i.test(msg)) return { ok: false, reason: 'sandbox' };
+        if (/model-unavailable/i.test(msg)) return { ok: false, reason: 'unavailable' };
+        return { ok: false, reason: 'create-error', error: msg };
+      }
+    }
+
     let avail;
     try {
-      avail = await Translator.availability({ sourceLanguage, targetLanguage });
+      avail = await Translator.availability({ sourceLanguage: src, targetLanguage: tgt });
     } catch (e) {
       if (/invalid language tag/i.test(e?.message || '')) return { skipped: true, reason: 'invalid-lang' };
       return { ok: false, reason: 'availability-error', error: String(e?.message || e) };
@@ -110,15 +193,14 @@
 
     if (avail === 'unavailable') return { ok: false, reason: 'unavailable' };
     const needsDownload = avail === 'downloadable' || avail === 'downloading';
-    const emitProgress = g.WTE?.wteEmitDownloadProgress;
 
     try {
       if (needsDownload && emitProgress) {
         emitProgress(ev, messageTabId, 0, 100, 0);
       }
       const translator = await Translator.create({
-        sourceLanguage,
-        targetLanguage,
+        sourceLanguage: src,
+        targetLanguage: tgt,
         ...(needsDownload && emitProgress && {
           monitor(m) {
             m.addEventListener('downloadprogress', (e) => {
@@ -132,7 +214,7 @@
       if (needsDownload && emitProgress) {
         emitProgress(ev, messageTabId, 100, 100, 100);
       }
-      return { ok: true, translator, sourceLanguage, targetLanguage };
+      return { ok: true, translator, sourceLanguage: src, targetLanguage: tgt };
     } catch (e) {
       const msg = String(e?.message || e);
       if (/user gesture/i.test(msg)) return { ok: false, reason: 'user-gesture' };

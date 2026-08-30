@@ -46,13 +46,14 @@
   /**
    * Notify extension UI about translation-model download progress (panel / popup).
    */
-  function wteEmitDownloadProgress(ev, messageTabId, loaded, total, percent) {
+  function wteEmitDownloadProgress(ev, messageTabId, loaded, total, percent, stream) {
     if (!ev?.downloadProgress || typeof chrome === 'undefined' || !chrome.runtime?.sendMessage) return;
     chrome.runtime.sendMessage({
       action: ev.downloadProgress,
       loaded,
       total,
       percent,
+      stream: stream || undefined,
       tabId: messageTabId ?? undefined,
     }).catch(() => {});
   }
@@ -136,6 +137,10 @@
         visible: overrides?.batch?.visible ?? base.batch?.visible ?? 20,
         offscreen: overrides?.batch?.offscreen ?? base.batch?.offscreen ?? 100,
         sep: overrides?.batch?.sep ?? base.batch?.sep ?? '\u2063',
+        /** 'shortest' (default) | 'headings-nav' — all visible headings/nav/menu first */
+        firstBatchPriority: overrides?.batch?.firstBatchPriority ?? base.batch?.firstBatchPriority ?? 'shortest',
+        /** Backend: translate remaining page batches with this concurrency after first batch */
+        pageConcurrency: overrides?.batch?.pageConcurrency ?? base.batch?.pageConcurrency ?? 1,
       },
       scrollDebounceMs: overrides?.scrollDebounceMs ?? base.scrollDebounceMs ?? 400,
       scrollRetryMs: overrides?.scrollRetryMs ?? base.scrollRetryMs ?? 2000,
