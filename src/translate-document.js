@@ -246,6 +246,48 @@ async function wteTranslateDocument(targetLanguage, sourceLanguageOverride, mess
         if (el.shadowRoot && !injElInChromeUi(el)) injGatherTextNodes(el.shadowRoot, out);
       }
     }
+    // Смена суммарайзера: уже переведённые блоки снова становятся исходным текстом.
+    // Движок сначала берёт видимые, затем остальные в том же проходе.
+    function injRestoreTranslatedForRetranslate(root) {
+      if (!root || !root.querySelectorAll) return;
+      const spans = root.querySelectorAll('.' + nm.classCached);
+      for (const span of spans) {
+        if (span.parentElement && injNodeInChromeUi(span.parentElement)) continue;
+        const orig = span.dataset[nm.dataOrig] != null ? span.dataset[nm.dataOrig] : (span.textContent || '');
+        if (span.parentNode) span.parentNode.replaceChild(document.createTextNode(orig), span);
+      }
+      const p = cfg.prefix || 'tsmpl';
+      const attrEls = root.querySelectorAll([
+        `[data-${p}-i18n-placeholder]`,
+        `[data-${p}-i18n-title]`,
+        `[data-${p}-i18n-aria-label]`,
+        `[data-${p}-i18n-alt]`,
+        `[data-${p}-i18n-content]`,
+        `[data-${p}-i18n-value]`,
+      ].join(','));
+      const steps = [
+        { key: nm.dataI18nPlaceholder, apply: (el, v) => { el.placeholder = v; } },
+        { key: nm.dataI18nTitle, apply: (el, v) => { el.setAttribute('title', v); } },
+        { key: nm.dataI18nAriaLabel, apply: (el, v) => { el.setAttribute('aria-label', v); } },
+        { key: nm.dataI18nAlt, apply: (el, v) => { el.setAttribute('alt', v); } },
+        { key: nm.dataI18nContent, apply: (el, v) => { el.setAttribute('content', v); } },
+        { key: nm.dataI18nValue, apply: (el, v) => { el.value = v; } },
+      ];
+      for (const el of attrEls) {
+        if (injNodeInChromeUi(el)) continue;
+        for (const { key, apply } of steps) {
+          if (el.dataset[key] != null && el.dataset[key] !== '') {
+            apply(el, el.dataset[key]);
+            delete el.dataset[key];
+          }
+        }
+        if (nm.dataAttrLang && el.dataset[nm.dataAttrLang] != null) delete el.dataset[nm.dataAttrLang];
+      }
+      root.querySelectorAll('*').forEach((el) => {
+        if (el.shadowRoot) injRestoreTranslatedForRetranslate(el.shadowRoot);
+      });
+    }
+
     function injUnwrapOrphanSpans(root) {
       root.querySelectorAll(nm.selOrigSpan).forEach((span) => {
         const t = span.dataset[nm.dataOrig] ?? span.textContent ?? '';
@@ -254,6 +296,14 @@ async function wteTranslateDocument(targetLanguage, sourceLanguageOverride, mess
       root.querySelectorAll('*').forEach((el) => {
         if (el.shadowRoot && !injElInChromeUi(el)) injUnwrapOrphanSpans(el.shadowRoot);
       });
+    }
+    if (typeof self !== 'undefined' && self.__tsmplRetranslateVisible) {
+      self.__tsmplRetranslateVisible = false;
+      const titleKey = nm.stateOriginalTitle;
+      if (titleKey && typeof window !== 'undefined' && window[titleKey] != null) {
+        document.title = window[titleKey];
+      }
+      injRestoreTranslatedForRetranslate(document.body);
     }
     injUnwrapOrphanSpans(document.body);
     const nodesToTranslate = [];
